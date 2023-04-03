@@ -8,20 +8,14 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct State {
-    //number of epochs 
-    iter_count: i64,
     //regression coefficients
     weights: Vec<f64>,
-    //total gradient (sum of the gradients of each replica)
-    global_grad: Vec<f64>,
 }
 
 impl State {
-    fn new(weights: Vec<f64>, global_grad: Vec<f64>) -> State {
+    fn new(weights: Vec<f64>) -> State {
         State {
             weights,
-            global_grad, 
-            ..Default::default()
         }}}
 
 
@@ -63,7 +57,7 @@ fn main() {
     }
 
     //initialize weights and global gradient to vectors of zeros
-    let initial_state = State::new(vec![0.;num_features+1],vec![0.;num_features+1]);
+    let initial_state = State::new(vec![0.;num_features+1]);
 
     //read from csv source
     let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
@@ -72,50 +66,60 @@ fn main() {
     let mut env = StreamEnvironment::new(config);
     env.spawn_remote_workers();
 
-    //get the weights from replay iterations
-    let res = env
-        .stream(source)
+    //this should return the weights in the model.fit method
+    let res = env.stream(source)
         .replay(
             num_iters,
             initial_state,
-            |s, state| {
-               s.shuffle().rich_filter_map({
-                let mut count = 0;
-                move |x|{
-                    count+=1;
-                    if count<=batch_size { Some(x) }
-                    else{ None }
-                }})
-               .rich_map({
+
+            |s, state| 
+            {
+                //shuffle the samples
+                s.shuffle()
+                //each replica gets a number of samples equal to batch size
+                .rich_filter_map({
+                    let mut count = 0;
+                    move |x|{
+                        count+=1;
+                        if count<=batch_size { 
+                            Some(x) }
+                        else{ 
+                            None }
+                    }})
+                //for each sample in each replica the gradient of the loss is computed (a vector of length: n_features+1)
+                .rich_map({
                     move |x|{
                         let sample_grad;
                         if let Some(y)=x.pop(){ 
-                            x.push(1.);
+                            x.push(1.); //add a column of ones for the intercept
                             let current_weights = &state.get().weights;
                             let prediction: f64 = x.iter().zip(current_weights.iter()).map(|(a, b)| a * b).sum();
                             let error = y-prediction;
                             sample_grad = x.iter().map(|v| v * error).collect();
                         }
                         sample_grad
-                    }
-                })
+                    }})
             },
-            |local_grad: &mut Vec<f64>, sample_grad| {
-                
+
+            |local_grad: &mut Vec<f64>, sample_grad| 
+            {
+                //the local gradient of each replica is computed as the sum of the gradients of the samples in the replica
                 local_grad.extend(vec![0.; sample_grad.len()]);
                 *local_grad = local_grad.iter().zip(sample_grad.iter()).map(|(a, b)| (a + b)).collect();
             },
-            move |state, mut local_grad| {
-                //state = somma di update di ogni replica/ replica
-                state.iter_count +=1;
-                //each iteration the global_grad must be set to 0 because we must do the cumulative sum of the local gradients
-                state.global_grad = vec![0.;local_grad.len()];
-                let num_replica = 1; //?????????????????
-                state.global_grad = state.global_grad.iter().zip(local_grad.iter()).map(|(a, b)| (a + b)/(batch_size * num_replica) as f64).collect();
-                state.weights = state.weights.iter().zip(state.global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
-            },
-            
 
+            move |state, mut local_grad| 
+            {
+                let num_replica = 1; //?????????????????
+                let mut global_grad = vec![0.;num_features];
+                global_grad = global_grad.iter().zip(local_grad.iter()).map(|(a, b)| (a + b)/(batch_size * num_replica) as f64).collect();
+                state.weights = state.weights.iter().zip(global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
+            },
+
+            |state| 
+            {
+                true
+            },
 
         )
         .collect_vec();
@@ -127,7 +131,6 @@ fn main() {
 
 
     env.execute();
-    print!("{:?}",res.get().unwrap());
     /* 
     assert_eq!(features.len(), num_features);
     let initial_state = State::new(centroids);
