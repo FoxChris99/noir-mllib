@@ -10,12 +10,15 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 struct State {
     //regression coefficients
     weights: Vec<f64>,
+    //to set the weights to zeros before the first update
+    to_be_initialized: bool,
 }
 
 impl State {
-    fn new(weights: Vec<f64>) -> State {
+    fn new() -> State {
         State {
-            weights,
+            weights:  Vec::new(),
+            to_be_initialized: true,
         }}}
 
 
@@ -27,37 +30,29 @@ fn main() {
         panic!("Wrong arguments!");
     }
 
-    let mut num_features = 1;
     let mut num_iters = 1000;
     let mut learn_rate= 1e-3;
     let mut batch_size=16;
-    let mut path_to_data = String::new();
+    let path_to_data: String;
 
     match args.len() {
 
+        1 => {path_to_data = args[0].parse().expect("Invalid file path");}
+
         2 => {path_to_data = args[0].parse().expect("Invalid file path");
-             num_features = args[1].parse().expect("Invalid number of features");}
+             num_iters = args[1].parse().expect("Invalid number of iterations");}
 
         3 => {path_to_data = args[0].parse().expect("Invalid file path");
-             num_features = args[1].parse().expect("Invalid number of features");
-             num_iters = args[2].parse().expect("Invalid number of iterations");}
+             num_iters = args[1].parse().expect("Invalid number of iterations");
+             learn_rate = args[2].parse().expect("Invalid learning rate");}
 
         4 => {path_to_data = args[0].parse().expect("Invalid file path");
-             num_features = args[1].parse().expect("Invalid number of features");
-             num_iters = args[2].parse().expect("Invalid number of iterations");
-             learn_rate = args[3].parse().expect("Invalid learning rate");}
-
-        5 => {path_to_data = args[0].parse().expect("Invalid file path");
-             num_features = args[1].parse().expect("Invalid number of features");
-             num_iters = args[2].parse().expect("Invalid number of iterations");
-             learn_rate = args[3].parse().expect("Invalid learning rate");
-             batch_size = args[4].parse().expect("Invalid batch_size");}
+             num_iters = args[1].parse().expect("Invalid number of iterations");
+             learn_rate = args[2].parse().expect("Invalid learning rate");
+             batch_size = args[3].parse().expect("Invalid batch_size");}
 
         _ => panic!("Wrong number of arguments!"),
     }
-
-    //initialize weights and global gradient to vectors of zeros
-    let initial_state = State::new(vec![0.;num_features+1]);
 
     //read from csv source
     let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
@@ -70,9 +65,9 @@ fn main() {
     let res = env.stream(source)
         .replay(
             num_iters,
-            initial_state,
+            State::new(),
 
-            |s, state| 
+            move |s, state| 
             {
                 //shuffle the samples
                 s.shuffle()
@@ -88,8 +83,8 @@ fn main() {
                     }})
                 //for each sample in each replica the gradient of the loss is computed (a vector of length: n_features+1)
                 .rich_map({
-                    move |x|{
-                        let sample_grad;
+                    move |mut x|{
+                        let mut sample_grad: Vec<f64> = vec![0.;x.len()];
                         if let Some(y)=x.pop(){ 
                             x.push(1.); //add a column of ones for the intercept
                             let current_weights = &state.get().weights;
@@ -108,15 +103,21 @@ fn main() {
                 *local_grad = local_grad.iter().zip(sample_grad.iter()).map(|(a, b)| (a + b)).collect();
             },
 
-            move |state, mut local_grad| 
+            move |state, local_grad| 
             {
                 let num_replica = 1; //?????????????????
-                let mut global_grad = vec![0.;num_features];
+                let mut global_grad = vec![0.;local_grad.len()];
                 global_grad = global_grad.iter().zip(local_grad.iter()).map(|(a, b)| (a + b)/(batch_size * num_replica) as f64).collect();
+                //initialize the weights to a vector of zeros
+                if state.to_be_initialized{
+                   state.to_be_initialized = false;
+                   state.weights = vec![0.;global_grad.len()];
+                }
+                //update the weights
                 state.weights = state.weights.iter().zip(global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
             },
 
-            |state| 
+            |_state| 
             {
                 true
             },
