@@ -1,10 +1,8 @@
 use noir::prelude::*;
 
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
-
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct State {
@@ -30,7 +28,7 @@ fn main() {
         panic!("Wrong arguments!");
     }
 
-    let mut num_iters = 1000;
+    let mut num_iters = 100;
     let mut learn_rate= 1e-3;
     let mut batch_size=16;
     let path_to_data: String;
@@ -61,7 +59,7 @@ fn main() {
     let mut env = StreamEnvironment::new(config);
     env.spawn_remote_workers();
 
-    //this should return the weights in the model.fit method
+    //return the weights computed with SGD thanks to the model.fit method
     let res = env.stream(source)
         .replay(
             num_iters,
@@ -126,12 +124,15 @@ fn main() {
         .collect_vec();
 
 
-
-
-
-
-
+    let start = Instant::now();
     env.execute();
+    let elapsed = start.elapsed();
+
+    if let Some(res) = res.get() {
+        let state = &res[0];
+        eprintln!("Weights: {:?}", state.weights);
+    }
+    eprintln!("Elapsed: {elapsed:?}");
     /* 
     assert_eq!(features.len(), num_features);
     let initial_state = State::new(centroids);
