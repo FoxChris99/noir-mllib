@@ -1,0 +1,17 @@
+###########################################################################
+# libssh2 installation details
+###########################################################################
+
+prefix=c:\Users\foxfo\OneDrive\Desktop\noir-mllib\linear_reg\target\debug\build\libssh2-sys-bcb0add2db372678\out
+exec_prefix=
+libdir=c:\Users\foxfo\OneDrive\Desktop\noir-mllib\linear_reg\target\debug\build\libssh2-sys-bcb0add2db372678\out\lib
+includedir=c:\Users\foxfo\OneDrive\Desktop\noir-mllib\linear_reg\target\debug\build\libssh2-sys-bcb0add2db372678\out\include
+
+Name: libssh2
+URL: https://www.libssh2.org/
+Description: Library for SSH-based communication
+Version: 1.10.1_DEV
+Requires.private: 
+Libs: -L${libdir} -lssh2 
+Libs.private: 
+Cflags: -I${includedir}

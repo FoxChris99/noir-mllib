@@ -1,109 +1,78 @@
-//use std::cmp::Ordering;
-//use std::hash::{Hash, Hasher};
-//use std::ops::{AddAssign, Div};
-//use std::time::Instant;
-use std::fs::File;
-use rand::distributions::{Distribution, Uniform};
-use ndarray::{Array, Array2, Array1};
-use std::error::Error;
+use noir::prelude::*;
+
 use serde::{Deserialize, Serialize};
 
-use noir::prelude::*;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-/*fn data_from_csv(filename: &str) -> Result<(Array2<f64>, Array1<f64>), Box<dyn Error>> {
-
-    let file = File::open(filename)?;
-    let mut reader = csv::ReaderBuilder::new().has_headers(true).from_reader(file);
-
-    let mut rows_feature: Vec<Vec<f64>> = vec![];
-    let mut target: Vec<f64> = vec![];
-
-    for result in reader.records() {
-
-        let record = result?;
-        let mut row: Vec<f64> = record.iter()
-            .map(|value| value.parse::<f64>().unwrap())
-            .collect();
-
-        if let Some(t)=row.pop(){ 
-            target.push(t);
-        }
-        else {
-            println!("Missing target values found");
-            target.push(999999.);
-        }
-
-        rows_feature.push(row);
-    }
-
-    let num_rows = rows_feature.len();
-    let num_cols = rows_feature[0].len();
-    let flat: Vec<f64> = rows_feature.into_iter().flatten().collect();
-    let features = Array::from_shape_vec((num_rows, num_cols), flat)?;
-    let target = Array::from_shape_vec(num_rows, target)?;
-
-    Ok((features,target))
-}*/
-
-/*fn select_nearest(point: Point, old_centroids: &[Point]) -> Point {
-    *old_centroids
-        .iter()
-        .map(|c| (c, point.distance_to(c)))
-        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-        .unwrap()
-        .0
-}*/
-
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct State {
+    //number of epochs 
     iter_count: i64,
+    //regression coefficients
     weights: Vec<f64>,
+    //total gradient (sum of the gradients of each replica)
+    global_grad: Vec<f64>,
 }
 
 impl State {
-    fn new(weights: Vec<f64>) -> State {
+    fn new(weights: Vec<f64>, global_grad: Vec<f64>) -> State {
         State {
             weights,
+            global_grad, 
             ..Default::default()
-        }
-    }
-}
+        }}}
+
 
 fn main() {
     let (config, args) = EnvironmentConfig::from_args();
 
-    //args: n_features, n_iters, path
-    if args.len() != 5 {
+    //args: path_to_data, n_features, n_iters, learn_rate, batch_size,
+    if args.len() == 5 || args.len() != 3 {
         panic!("Wrong arguments!");
     }
-    let num_features: usize = args[0].parse().expect("Invalid number of features");
-    let num_iters: usize = args[1].parse().expect("Invalid number of iterations");
-    let batch_size: usize = args[2].parse().expect("Invalid batch size");
-    let learn_rate: usize = args[3].parse().expect("Invalid learning rate");
 
-    //get dataset path
-    let path = &args[4];
+    let mut num_features = 1;
+    let mut num_iters = 1000;
+    let mut learn_rate= 1e-3;
+    let mut batch_size=16;
+    let mut path_to_data = String::new();
+
+    match args.len() {
+
+        2 => {path_to_data = args[0].parse().expect("Invalid file path");
+             num_features = args[1].parse().expect("Invalid number of features");}
+
+        3 => {path_to_data = args[0].parse().expect("Invalid file path");
+             num_features = args[1].parse().expect("Invalid number of features");
+             num_iters = args[2].parse().expect("Invalid number of iterations");}
+
+        4 => {path_to_data = args[0].parse().expect("Invalid file path");
+             num_features = args[1].parse().expect("Invalid number of features");
+             num_iters = args[2].parse().expect("Invalid number of iterations");
+             learn_rate = args[3].parse().expect("Invalid learning rate");}
+
+        5 => {path_to_data = args[0].parse().expect("Invalid file path");
+             num_features = args[1].parse().expect("Invalid number of features");
+             num_iters = args[2].parse().expect("Invalid number of iterations");
+             learn_rate = args[3].parse().expect("Invalid learning rate");
+             batch_size = args[4].parse().expect("Invalid batch_size");}
+
+        _ => panic!("Wrong number of arguments!"),
+    }
+
+    //initialize weights and global gradient to vectors of zeros
+    let initial_state = State::new(vec![0.;num_features+1],vec![0.;num_features+1]);
+
+    //read from csv source
+    let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
 
     //create the environment
     let mut env = StreamEnvironment::new(config);
     env.spawn_remote_workers();
 
-    //get data features + target
-    //let (features, target) = data_from_csv(path).unwrap();
-    //println!("Features: {:?}", features);
-    //println!("Target: {:?}", target);
-    
-    //weights vector initialization
-    let mut rng = rand::thread_rng();
-    let uniform = Uniform::new(-0.1, 0.1);
-    let init = (0..num_features+1).map(|_| uniform.sample(&mut rng)).collect();
-    let initial_state = State::new(init);
-
-    
-    let source = CsvSource::<Vec<f64>>::new(path).has_headers(true).delimiter(b',');
+    //get the weights from replay iterations
     let res = env
         .stream(source)
         .replay(
@@ -119,23 +88,33 @@ fn main() {
                 }})
                .rich_map({
                     move |x|{
-                        let error;
+                        let sample_grad;
                         if let Some(y)=x.pop(){ 
                             x.push(1.);
-                            let current = &state.get().weights;
-                            let prediction = x.iter().zip(current.iter()).map(|(a, b)| a * b).sum();
-                            error = y-prediction;
+                            let current_weights = &state.get().weights;
+                            let prediction: f64 = x.iter().zip(current_weights.iter()).map(|(a, b)| a * b).sum();
+                            let error = y-prediction;
+                            sample_grad = x.iter().map(|v| v * error).collect();
                         }
-                        error * x
+                        sample_grad
                     }
                 })
             },
-            |update: &mut Vec<f64>, p| {
-                update.iter().zip(p.iter()).map(|(a, b)| (a + b)/batch_size as f64).collect();
-            },
-            move |state, mut update| {
+            |local_grad: &mut Vec<f64>, sample_grad| {
                 
-            }
+                local_grad.extend(vec![0.; sample_grad.len()]);
+                *local_grad = local_grad.iter().zip(sample_grad.iter()).map(|(a, b)| (a + b)).collect();
+            },
+            move |state, mut local_grad| {
+                //state = somma di update di ogni replica/ replica
+                state.iter_count +=1;
+                //each iteration the global_grad must be set to 0 because we must do the cumulative sum of the local gradients
+                state.global_grad = vec![0.;local_grad.len()];
+                let num_replica = 1; //?????????????????
+                state.global_grad = state.global_grad.iter().zip(local_grad.iter()).map(|(a, b)| (a + b)/(batch_size * num_replica) as f64).collect();
+                state.weights = state.weights.iter().zip(state.global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
+            },
+            
 
 
         )
