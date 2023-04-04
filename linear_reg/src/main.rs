@@ -20,8 +20,8 @@ struct State {
 impl State {
     fn new(n_features: usize) -> State {
         State {
-            weights:  vec![0.;n_features],
-            global_grad: vec![0.;n_features],
+            weights:  vec![0.;n_features+1],
+            global_grad: vec![0.;n_features+1],
             epoch : 0,
         }}}
 
@@ -113,7 +113,7 @@ fn main() {
             {
                 let num_replica = 10; //?
                 //the local gradient of each replica is computed as the sum of the gradients of the samples in the replica
-                let mut local_grad_sum: Vec<f64> = vec![0.;num_features];
+                let mut local_grad_sum: Vec<f64> = vec![0.;num_features+1];
                 //the sum is performed over the columns (corresponding to a feature)
                 for row in local_grad.iter(){
                     local_grad_sum = local_grad_sum.iter().zip(row.iter()).map(|(a, b)| (a + b)).collect();
@@ -129,7 +129,7 @@ fn main() {
                 //update the weights
                 state.weights = state.weights.iter().zip(state.global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
                 //reset the global gradient for the next iteration
-                state.global_grad = vec![0.;num_features];
+                state.global_grad = vec![0.;num_features+1];
                 //loop condition
                 state.epoch < num_iters
             },
