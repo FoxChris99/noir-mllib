@@ -128,10 +128,11 @@ fn main() {
                 state.epoch +=1;
                 //update the weights
                 state.weights = state.weights.iter().zip(state.global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
+                let tol: f64 = state.global_grad.iter().map(|v| v.abs()).sum();
                 //reset the global gradient for the next iteration
                 state.global_grad = vec![0.;num_features+1];
                 //loop condition
-                state.epoch < num_iters
+                state.epoch < num_iters && tol>1e-3
             },
 
         )
@@ -145,8 +146,10 @@ fn main() {
     if let Some(res) = res.get() {
         let state = &res[0];
         eprintln!("Weights: {:?}", state.weights);
+        eprintln!("Epochs: {:?}",state.epoch);
     }
     eprintln!("Elapsed: {elapsed:?}");
+    
     /* 
     assert_eq!(features.len(), num_features);
     let initial_state = State::new(centroids);
