@@ -1,22 +1,28 @@
 use noir::prelude::*;
 
 use serde::{Deserialize, Serialize};
+
 use std::time::Instant;
+
+
 
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct State {
     //regression coefficients
     weights: Vec<f64>,
-    //to set the weights to zeros before the first update
-    to_be_initialized: bool,
+    //total gradient of the batch
+    global_grad: Vec<f64>,
+    //iterations over the dataset
+    epoch: usize,
 }
 
 impl State {
-    fn new() -> State {
+    fn new(n_features: usize) -> State {
         State {
-            weights:  Vec::new(),
-            to_be_initialized: true,
+            weights:  vec![0.;n_features],
+            global_grad: vec![0.;n_features],
+            epoch : 0,
         }}}
 
 
@@ -24,30 +30,32 @@ fn main() {
     let (config, args) = EnvironmentConfig::from_args();
 
     //args: path_to_data, n_features, n_iters, learn_rate, batch_size,
-    if args.len() == 5 || args.len() != 3 {
-        panic!("Wrong arguments!");
-    }
-
+    let path_to_data: String;
+    let num_features: usize;
     let mut num_iters = 100;
     let mut learn_rate= 1e-3;
-    let mut batch_size=16;
-    let path_to_data: String;
+    let mut batch_size= 16;
+    
 
     match args.len() {
 
-        1 => {path_to_data = args[0].parse().expect("Invalid file path");}
-
         2 => {path_to_data = args[0].parse().expect("Invalid file path");
-             num_iters = args[1].parse().expect("Invalid number of iterations");}
+             num_features = args[1].parse().expect("Invalid number of features");}
 
         3 => {path_to_data = args[0].parse().expect("Invalid file path");
-             num_iters = args[1].parse().expect("Invalid number of iterations");
-             learn_rate = args[2].parse().expect("Invalid learning rate");}
+             num_features = args[1].parse().expect("Invalid number of features");
+             num_iters = args[2].parse().expect("Invalid number of iterations");}
 
         4 => {path_to_data = args[0].parse().expect("Invalid file path");
-             num_iters = args[1].parse().expect("Invalid number of iterations");
-             learn_rate = args[2].parse().expect("Invalid learning rate");
-             batch_size = args[3].parse().expect("Invalid batch_size");}
+             num_features = args[1].parse().expect("Invalid number of features");
+             num_iters = args[2].parse().expect("Invalid number of iterations");
+             learn_rate = args[3].parse().expect("Invalid learning rate");}
+
+        5 => {path_to_data = args[0].parse().expect("Invalid file path");
+             num_features = args[1].parse().expect("Invalid number of features");
+             num_iters = args[2].parse().expect("Invalid number of iterations");
+             learn_rate = args[3].parse().expect("Invalid learning rate");
+             batch_size = args[4].parse().expect("Invalid batch_size");}
 
         _ => panic!("Wrong number of arguments!"),
     }
@@ -63,61 +71,67 @@ fn main() {
     let res = env.stream(source)
         .replay(
             num_iters,
-            State::new(),
+            State::new(num_features),
 
             move |s, state| 
             {
                 //shuffle the samples
                 s.shuffle()
                 //each replica gets a number of samples equal to batch size
-                .rich_filter_map({
-                    let mut count = 0;
-                    move |x|{
-                        count+=1;
-                        if count<=batch_size { 
-                            Some(x) }
-                        else{ 
-                            None }
-                    }})
-                //for each sample in each replica the gradient of the loss is computed (a vector of length: n_features+1)
+                // .rich_filter_map({
+                //     let mut count = 0;
+                //     move |x|{
+                //         count+=1;
+                //         if count<=batch_size { 
+                //             Some(x) }
+                //         else{ 
+                //             None }
+                // }})
+                //for each sample in each replica the gradient of the mse loss is computed (a vector of length: n_features+1)
                 .rich_map({
                     move |mut x|{
                         let mut sample_grad: Vec<f64> = vec![0.;x.len()];
-                        if let Some(y)=x.pop(){ 
+                        if let Some(y)=x.pop(){ //pop the target and store it in y
                             x.push(1.); //add a column of ones for the intercept
                             let current_weights = &state.get().weights;
-                            let prediction: f64 = x.iter().zip(current_weights.iter()).map(|(a, b)| a * b).sum();
-                            let error = y-prediction;
-                            sample_grad = x.iter().map(|v| v * error).collect();
+                            let prediction: f64 = x.iter().zip(current_weights.iter()).map(|(xi, bi)| xi * bi).sum();
+                            let error = prediction - y;
+                            sample_grad = x.iter().map(|xi| xi * error).collect();
                         }
                         sample_grad
                     }})
             },
 
-            |local_grad: &mut Vec<f64>, sample_grad| 
+            //the sample gradients vectors of each replica are pushed in a local_grad vector of vectors of the replica
+            move |local_grad: &mut Vec<Vec<f64>>, sample_grad| 
             {
-                //the local gradient of each replica is computed as the sum of the gradients of the samples in the replica
-                local_grad.extend(vec![0.; sample_grad.len()]);
-                *local_grad = local_grad.iter().zip(sample_grad.iter()).map(|(a, b)| (a + b)).collect();
+                local_grad.push(sample_grad);
             },
 
+            //the global gradient is computed as the average of the gradients of each replica
             move |state, local_grad| 
             {
-                let num_replica = 1; //?????????????????
-                let mut global_grad = vec![0.;local_grad.len()];
-                global_grad = global_grad.iter().zip(local_grad.iter()).map(|(a, b)| (a + b)/(batch_size * num_replica) as f64).collect();
-                //initialize the weights to a vector of zeros
-                if state.to_be_initialized{
-                   state.to_be_initialized = false;
-                   state.weights = vec![0.;global_grad.len()];
+                let num_replica = 10; //?
+                //the local gradient of each replica is computed as the sum of the gradients of the samples in the replica
+                let mut local_grad_sum: Vec<f64> = vec![0.;num_features];
+                //the sum is performed over the columns (corresponding to a feature)
+                for row in local_grad.iter(){
+                    local_grad_sum = local_grad_sum.iter().zip(row.iter()).map(|(a, b)| (a + b)).collect();
                 }
-                //update the weights
-                state.weights = state.weights.iter().zip(global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
+                //the average is computed as sum/(batch size * n_replica)
+                state.global_grad = state.global_grad.iter().zip(local_grad_sum.iter()).map(|(a, b)| (a + b)/(batch_size * num_replica) as f64).collect();
             },
 
-            |_state| 
-            {
-                true
+            move|state| 
+            {   
+                //update iterations
+                state.epoch +=1;
+                //update the weights
+                state.weights = state.weights.iter().zip(state.global_grad.iter()).map(|(beta, g)| beta - g * learn_rate).collect();
+                //reset the global gradient for the next iteration
+                state.global_grad = vec![0.;num_features];
+                //loop condition
+                state.epoch < num_iters
             },
 
         )
