@@ -7,25 +7,27 @@ use serde::{Deserialize, Serialize};
 
 use std::time::Instant;
 
-
+//Struct for messages coming from the source
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Message{
     pub text: String,
     pub class: String,
 }
 
-/*#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TokenizedMessage<'a>{
-    pub tokens: HashSet<&'a str>,
+//Struct for messages, after being tokenized into single words
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TokenizedMessage{
+    pub tokens: HashSet<String>,
     pub class: String,
-}*/
+}
 
+//Split a message text into its single words, removing duplicates
 pub fn tokenize(text: String) -> HashSet<String> {
     let mut set = HashSet::new();
     let tokens: Vec<String> = Regex::new(r"[A-Za-z0-9']+")
         .unwrap()
         .find_iter(&text)
-        .map(|mat| mat.as_str().to_lowercase())
+        .map(|word| word.as_str().to_lowercase())
         .collect();
 
     for token in tokens.iter(){
@@ -34,69 +36,108 @@ pub fn tokenize(text: String) -> HashSet<String> {
     set
 }
 
+//Struct for classifier model, used for training and prediction
+#[derive(Default, Debug)] 
 pub struct NaiveBayesClassifier {
     pub alpha: f64,
     pub tokens: HashSet<String>,
-    pub token_counts: Vec<HashMap<String, i32>>,
-    pub messages_count: HashMap<String, i32>
+    pub token_counts: HashMap<String,HashMap<String, i32>>,
+    pub messages_count: HashMap<String, usize>
 }
 
 impl NaiveBayesClassifier{
-    fn new(alpha: f64, num_classes: usize)-> NaiveBayesClassifier{
+    fn new(alpha: f64)-> NaiveBayesClassifier{
         NaiveBayesClassifier {
             alpha,
-            tokens: Default::default(),
-            token_counts: vec![HashMap::new(); num_classes],
-            messages_count: Default::default()
+            ..Default::default()
         }
     }
 }
 
+
 fn main(){
     let (config, args) = EnvironmentConfig::from_args();
-    let path: String;
-    let num_classes: usize;
+    let train_path: String;
+    let test_path: String;
     let alpha = 1.;
 
-    path = args[0].parse().expect("Invalid file path");
-    num_classes = args[1].parse().expect("Invalid number of features");
+    train_path = args[0].parse().expect("Invalid file path");
+    test_path = args[0].parse().expect("Invalid file path");
 
-    let words = String::from("Ciao Cacca Ciao Blu Bello Ciao");
-    println!("{:?}",tokenize(words));
-
-    let mut classifier = NaiveBayesClassifier::new(alpha, num_classes);
+    let mut classifier = NaiveBayesClassifier::new(alpha);
 
     //read from csv source
-    let source = CsvSource::<Message>::new(path).has_headers(true).delimiter(b',');
+    let source = CsvSource::<Message>::new(train_path).has_headers(true).delimiter(b',');
 
     //create the environment
-    let mut env = StreamEnvironment::new(config);
+    let mut env = StreamEnvironment::new(config.clone());
     env.spawn_remote_workers();
 
-    let res = env.stream(source.clone())
+    //count number of messages per class
+    let res_msg_counts = env.stream(source.clone())
         .group_by_count(|n| n.class.clone())
-        .collect_vec(); 
+        .collect_vec();
 
-    let res = env.stream(source)
+    //count amount of tokens per class
+    let res_token_counts = env.stream(source.clone())
+        .rich_map({
+            move |x|{
+                TokenizedMessage {tokens: tokenize(x.text), class: x.class}
+            }
+            }
+        )
         .group_by_fold(
-            |n| n.class.clone(),
-            HashSet::new(),
-            |update, m| {for token in tokenize(m.text).iter() {update.insert(token);}},
-            //|update, m| update = update.union(&HashSet::new()/*&tokenize(m.text)*/).collect(),
-            |update, m| update.union(&m),
-        ).collect_vec(); 
-  
+            |n| n.class.to_string(),
+            HashMap::new(),
+            move |set, msg| { 
+                for token in msg.tokens{
+                    match set.get(&token.to_string()){
+                        Some(count) => {set.insert(token.to_string(), count+1);}
+                        None => {set.insert(token.to_string(), 1);} 
+                    }
+                }
+             },
+             move |set, msg| { 
+                for (token,val) in msg.iter() {
+                    match set.get(&token.to_string()){
+                        Some(count) => {set.insert(token.to_string(), count+val);}
+                        None => {set.insert(token.to_string(), *val);} 
+                    }
+                }
+             },
+        )
+        .collect_vec(); 
 
     let start = Instant::now();
     env.execute();
     let elapsed = start.elapsed();
 
-    
-
-    if let Some(res) = res.get() {
-        let state = &res;
-        eprintln!("{:?}",state); 
+    //Configure classifier model with resulting data from stream    
+    if let Some(res_msg_counts) = res_msg_counts.get(){
+        let counts =  &res_msg_counts;
+        for (key, val) in counts{
+            classifier.messages_count.insert(key.to_string(),*val);
+        }
     }
+
+    if let Some(res_token_counts) = res_token_counts.get() {
+        let tokens = &res_token_counts;
+        for (key, val) in tokens{
+            classifier.token_counts.insert(key.to_string(),val.clone());
+            for token in val.keys(){
+                classifier.tokens.insert(token.to_string());
+            }
+        }
+    }
+
+    eprintln!("{:#?}",classifier);
     eprintln!("Elapsed: {elapsed:?}");     
 
+
+    let source = CsvSource::<Message>::new(test_path).has_headers(true).delimiter(b',');
+    let mut env = StreamEnvironment::new(config);
+    env.spawn_remote_workers();
+
+    
+    
 }
