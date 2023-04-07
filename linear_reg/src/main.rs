@@ -37,7 +37,7 @@ pub fn tokenize(text: String) -> HashSet<String> {
 }
 
 //Struct for classifier model, used for training and prediction
-#[derive(Default, Debug)] 
+#[derive(Default, Debug, Clone)] 
 pub struct NaiveBayesClassifier {
     pub alpha: f64,
     pub tokens: HashSet<String>,
@@ -51,6 +51,20 @@ impl NaiveBayesClassifier{
             alpha,
             ..Default::default()
         }
+    }
+
+    fn token_probs(self, token: String) -> HashMap<String,f64> {
+        let mut map: HashMap<String,f64> = HashMap::new();
+        for class in self.messages_count.keys() {
+            let count: i32;
+            match self.token_counts[class].get(&token) {
+                Some(val) => {count = *val;}
+                None => {count = 0;}
+            }
+            let prob = (count as f64 + self.alpha) / (self.messages_count[class] as f64 + self.messages_count.keys().len() as f64 * self.alpha);
+            map.insert(class.clone(), prob); 
+        }
+        map
     }
 }
 
@@ -89,7 +103,7 @@ fn main(){
         .group_by_fold(
             |n| n.class.to_string(),
             HashMap::new(),
-            move |set, msg| { 
+            move |set, msg| {
                 for token in msg.tokens{
                     match set.get(&token.to_string()){
                         Some(count) => {set.insert(token.to_string(), count+1);}
@@ -137,6 +151,31 @@ fn main(){
     let source = CsvSource::<Message>::new(test_path).has_headers(true).delimiter(b',');
     let mut env = StreamEnvironment::new(config);
     env.spawn_remote_workers();
+
+    let res = env.stream(source.clone())
+    .rich_map({
+        move |x|{
+            let model = classifier.clone();
+            let mut probs_tot: HashMap<String,f64> = HashMap::new();
+            for class in classifier.messages_count.keys(){
+               probs_tot.insert(class.to_string(),0.);     
+            } 
+            let tokenized = TokenizedMessage {tokens: tokenize(x.text), class: x.class};
+
+            for token in tokenized.tokens{
+                let probs = classifier.token_probs(token);
+                for (key,val) in probs_tot{
+                    if let Some(a) = probs.get(&key){
+                        probs_tot.insert(key, val+a);
+                    }
+                }    
+            }
+            x
+             
+        }    
+        })    
+    .collect_vec();
+
 
     
     
