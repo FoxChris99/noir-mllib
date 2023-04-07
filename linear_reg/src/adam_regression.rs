@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -72,7 +74,7 @@ fn main() {
     let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
 
     //create the environment
-    let mut env = StreamEnvironment::new(config);
+    let mut env = StreamEnvironment::new(config.clone());
     env.spawn_remote_workers();
 
     //return the weights computed with SGD thanks to the model.fit method
@@ -85,42 +87,25 @@ fn main() {
             {
                 //shuffle the samples
                 s.shuffle()
-                //each replica filter a number of samples equal to batch size
+                //each replica filter a number of samples equal to batch size and
+                //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
                 .rich_filter_map({
                     let mut count = 0;
                     move |mut x|{
-                        //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size
+                        //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
                         if count < batch_size * (state.get().epoch+1) {
-                            count+=1; 
-                            if let Some(y)=x.pop(){ //pop the target and store it in y
-                                x.push(1.); //add a column of ones for the intercept
+                            count+=1;
+                            //the target is in the last element of each sample
+                            let y: f64 = x[num_features]; 
+                            //switch the target with a 1 for the intercept
+                            x[num_features] = 1.;
                                 let current_weights = &state.get().weights;
                                 let prediction: f64 = x.iter().zip(current_weights.iter()).map(|(xi, bi)| xi * bi).sum();
                                 let error = prediction - y;
-                                let sample_grad: Vec<f64> = x.iter().map(|xi| xi * error /(batch_size * 1) as f64).collect();                            
-                                Some(sample_grad) 
-                            }      
-                            else{ 
-                                None 
+                                let sample_grad: Vec<f64> = x.iter().map(|xi| xi * error).collect();                            
+                                Some(sample_grad)
                             }
-                        }
-                        else{ 
-                            None 
-                        }
-                }})
-                //for each sample in each replica the gradient of the mse loss is computed (a vector of length: n_features+1)
-                // .rich_map({
-                //     move |mut x|{
-                //         let mut sample_grad: Vec<f64> = vec![0.;x.len()];
-                //         if let Some(y)=x.pop(){ //pop the target and store it in y
-                //             x.push(1.); //add a column of ones for the intercept
-                //             let current_weights = &state.get().weights;
-                //             let prediction: f64 = x.iter().zip(current_weights.iter()).map(|(xi, bi)| xi * bi).sum();
-                //             let error = prediction - y;
-                //             sample_grad = x.iter().map(|xi| xi * error).collect();
-                //         }
-                //         sample_grad
-                //     }})
+                        else {None}}})
             },
 
             //the sample gradients vectors of each replica are pushed in a local_grad vector of vectors of the replica
@@ -176,49 +161,62 @@ fn main() {
         )
         .collect_vec();
 
-        
-
-    
     let res2 = env.stream(source.clone())
-    .group_by_avg(|_x| true, |x| x[x.len()-1]).drop_key().collect_vec();
+    .group_by_avg(|_x| true, move|x| x[num_features]).drop_key().collect_vec();
     
     
-    let mut avg_y = 0.;
-    if let Some(res2) = res2.get() {
-        avg_y = res2[0];}
-
-    let res3 = env.stream(source)//.group_by_sum(|&x| x, |x| x[0]).collect_vec();//fold_assoc(init, local, global)
-        .map(move |mut x| {
-            let mut y = 0.;//pop the target and store it in y
-            if let Some(z)=x.pop(){
-                y = z;
-            }     
-            x.push(1.);
-            let pred: f64 = x.iter().zip(weights.iter()).map(|(xi,wi)| xi*wi).sum();
-            [(y-avg_y).powi(2),(y-pred).powi(2)]
-        })
-        .fold_assoc([0.,0.], 
-            |acc,value| {acc[0]+=value[0];acc[1]+=value[1];}, 
-            |acc,value| {acc[0]+=value[0];acc[1]+=value[1];})
-        .collect_vec();
-
-
-
     let start = Instant::now();
+
     env.execute();
-    let elapsed = start.elapsed();
+
+
 
     if let Some(res) = res.get() {
         let state = &res[0];
         let weights = state.weights.clone();
 
+
+    let mut avg_y = 0.;
+    if let Some(res2) = res2.get() {
+        avg_y = res2[0];}
+
+
+
+
+
+                
+
+    let mut env2 = StreamEnvironment::new(config);
+    env2.spawn_remote_workers();
+
+
+    let res3 = env2.stream(source)
+
+        .map(move |mut x| {
+            let y = x[num_features];
+            x[num_features] = 1.;   
+            let pred: f64 = x.iter().zip(weights.iter()).map(|(xi,wi)| xi*wi).sum();
+            [(y-pred).powi(2),(y-avg_y).powi(2)]           
+        })
+
+        .fold_assoc([0.,0.],
+            |acc,value| {acc[0]+=value[0];acc[1]+=value[1];}, 
+            |acc,value| {acc[0]+=value[0];acc[1]+=value[1];})
+        .collect_vec();
+
+    
+    env2.execute();
+
+
+    let elapsed = start.elapsed();
         
-    let mut r2 = -1.;
+    let mut r2 = -999.;
     if let Some(res3) = res3.get() {
         r2 = 1.-(res3[0][0]/res3[0][1]);}
     
     eprintln!("Weights: {:?}", state.weights);
     eprintln!("Epochs: {:?}",state.epoch);
+    eprintln!("Mean: {:?}",avg_y);
     eprintln!("R2: {:?}",r2);
     eprintln!("Elapsed: {elapsed:?}");
 }
