@@ -3,77 +3,13 @@ use noir::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use std::time::Instant;
-use std::ops::{AddAssign,Div,Sub};
+
+mod sample;
+use sample::Sample;
 
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-#[derive(Clone, Serialize, Deserialize, Default, Debug)]
-struct Sample(Vec<f64>);
-
-// Implement AddAssign for MyVec
-impl AddAssign for Sample {
-    fn add_assign(&mut self, other: Self) {
-        assert_eq!(self.0.len(), other.0.len(), "Vectors must have the same length");
-
-        for (i, element) in other.0.into_iter().enumerate() {
-            self.0[i] += element;
-        }
-    }
-}
-
-impl Sub for Sample {
-    type Output = Self;
-
-    fn sub(self, other: Self) -> Self::Output {
-        // Make sure the two vectors have the same length
-        assert_eq!(self.0.len(), other.0.len(), "Vectors must have the same length");
-
-        // Create a new MyVec instance to store the result
-        let mut result = Sample(vec![0.0; self.0.len()]);
-
-        // Iterate over each element and subtract them
-        for (i, element) in self.0.into_iter().enumerate() {
-            result.0[i] = element - other.0[i];
-        }
-
-        result
-    }
-}
-
-impl Div for Sample {
-    type Output = Self;
-
-    fn div(self, other: Self) -> Self::Output {
-        assert_eq!(self.0.len(), other.0.len(), "Vectors must have the same length");
-
-        let mut result = Sample(vec![0.0; self.0.len()]);
-
-        // Iterate over each element and divide them
-        for (i, element) in self.0.into_iter().enumerate() {
-            result.0[i] = element / other.0[i];
-        }
-
-        result
-    }
-}
-
-impl Div<f64> for Sample {
-    type Output = Self;
-
-    fn div(self, other: f64) -> Self::Output {
-        
-        let mut result = Sample(vec![0.0; self.0.len()]);
-
-        // Iterate over each element and divide them
-        for (i, element) in self.0.into_iter().enumerate() {
-            result.0[i] = element / other;
-        }
-
-        result
-    }
-}
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct State {
@@ -151,41 +87,43 @@ fn main() {
 
 
     //NORMALIZATION
-    if norm==true{}
+    let mut mean: Vec<f64> = vec![0.;num_features+1];
+    let mut std = vec![0.;num_features+1];
+    
+    if norm==true{
+
     let mut env0 = StreamEnvironment::new(config.clone());
     env0.spawn_remote_workers();
+    
     //get the mean of all the features + target and the second moment E[x^2]
-    let  features_mean = env0.stream(source.clone())
+    let features_mean = env0.stream(source.clone())
     .map(move |mut x| 
         {
-        for i in 0..num_features+1{
-            x.0.push(x.0[i].powi(2));}
-        x
+            x.0.extend(x.0.iter().map(|xi| xi.powi(2)).collect::<Vec<f64>>());
+            x
         })
     .group_by_avg(|_x| true, |x| x.clone()).drop_key().collect_vec();
-
 
     env0.execute();
     
     let mut moments:Vec<f64> = vec![0.;2*num_features+2];
     if let Some(means_vector) = features_mean.get() {
-         moments = means_vector[0].0.clone();}
+        moments = means_vector[0].0.clone();}
     
-    let mean: Vec<f64> = moments.iter().take(num_features+1).cloned().collect::<Vec<f64>>();
-    let mean_ = mean.clone();
-    let mut std: Vec<f64> = moments.iter().skip(num_features+1).cloned().collect::<Vec<f64>>();
-    let std_ = std.clone();
+    mean= moments.iter().take(num_features+1).cloned().collect::<Vec<f64>>();
+    
+    std = moments.iter().skip(num_features+1).cloned().collect::<Vec<f64>>();
 
     std = std.iter().zip(mean.iter()).map(|(e2,avg)| (e2-avg.powi(2)).sqrt()).collect();
+    
+    }
+    let std_ = std.clone();
+    let mean_ = mean.clone();
 
 
-    //create the environment
+    //TRAINING
     let mut env = StreamEnvironment::new(config.clone());
     env.spawn_remote_workers();
-    
-
-
-    
 
     //return the weights computed with SGD thanks to the model.fit method
     let fit = env.stream(source.clone())
@@ -206,9 +144,9 @@ fn main() {
                         if count < batch_size * (state.get().epoch+1) {
                             count+=1;
                             if norm==true{
-                            //scale the features and the target
+                                //scale the features and the target
                                 x.0 = x.0.iter().zip(mean_.iter().zip(std_.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
-                            }
+                                }
                             //the target is in the last element of each sample
                             let y: f64 = x.0[num_features]; 
                             //switch the target with a 1 for the intercept
@@ -234,8 +172,7 @@ fn main() {
 
             move |state, local_grad| 
             {   
-                //we don't want to read empty replica gradient
-                //BAD COMMUNICATION!!! Maybe Max_parallelism(1) just before local and global fold
+                //we don't want to read empty replica gradient (this should be solved by using the max_parallelism(1) above)
                 if local_grad.0.len()==num_features+1{
                 state.global_grad = local_grad.0.clone();}
             },
