@@ -60,7 +60,7 @@ impl StateAdam {
 
 //Linear regression model
 #[derive(Clone, Debug)]
-struct LinearRegression {
+struct RidgeRegression {
     //all n+1 coeff
     coefficients: Vec<f64>,
     //n coeff without intercept
@@ -79,10 +79,10 @@ struct LinearRegression {
 }
 
 
-impl LinearRegression {
-    fn new() -> LinearRegression {
+impl RidgeRegression {
+    fn new() -> RidgeRegression {
 
-        LinearRegression {
+        RidgeRegression {
             coefficients: Vec::<f64>::new(),
             features_coef: Vec::<f64>::new(),
             intercept: 0.,
@@ -95,10 +95,10 @@ impl LinearRegression {
 }
 
 //train the model with sgd or adam
-impl LinearRegression {
-    fn fit(mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, batch_size: usize, normalize: bool, weight_decay: bool, config: &EnvironmentConfig)
-    -> LinearRegression{
-            
+impl RidgeRegression {
+    fn fit(mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, batch_size: usize, normalize: bool, lambda: f64, weight_decay: bool, config: &EnvironmentConfig)
+    -> RidgeRegression{
+
             self.fitted = true;
 
             //to normalize the samples we need their mean and std
@@ -177,17 +177,18 @@ impl LinearRegression {
                                     let y: f64 = x.0[dim-1]; 
                                     //switch the target with a 1 for the intercept
                                     x.0[dim-1] = 1.;
-                                    
+
                                     let mut current_weights = &state.get().weights;
                                     let vec = vec![0.;dim];
                                     if state.get().epoch == 0{
                                         current_weights = &vec;
                                     }
-
+                                    
                                     let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
                                     let error = prediction - y;
-                                    let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();                            
-                                    Some(Sample(sample_grad))
+                                    let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();
+
+                                    Some(Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + wi * lambda).collect()))
                                     }
                                 else {None}}})
                         //the average of the gradients is computed and forwarded as a single value
@@ -246,7 +247,7 @@ impl LinearRegression {
             self.coefficients = state.weights.clone();
             self.intercept = state.weights[state.weights.len()-1];}
 
-            LinearRegression {
+            RidgeRegression {
                 coefficients: self.coefficients.clone(),
                 features_coef: self.coefficients.iter().take(self.coefficients.len()-1).cloned().collect::<Vec::<f64>>(),
                 intercept: self.intercept,
@@ -289,7 +290,7 @@ impl LinearRegression {
                                     let y: f64 = x.0[dim-1]; 
                                     //switch the target with a 1 for the intercept
                                     x.0[dim-1] = 1.;
-
+                                    
                                     let mut current_weights = &state.get().weights;
                                     let vec = vec![0.;dim];
                                     if state.get().epoch == 0{
@@ -298,8 +299,9 @@ impl LinearRegression {
 
                                     let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
                                     let error = prediction - y;
-                                    let mut sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();
-                                    Some(Sample(sample_grad))
+                                    let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();
+
+                                    Some(Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + wi * lambda).collect()))
                                     }
                                 else {None}}})
                         //the average of the gradients is computed and forwarded as a single value
@@ -349,7 +351,7 @@ impl LinearRegression {
             self.coefficients = state.weights.clone();
             self.intercept = state.weights[self.coefficients.len()-1];}
 
-            LinearRegression {
+            RidgeRegression {
                 coefficients: self.coefficients.clone(),
                 features_coef: self.coefficients.iter().take(self.coefficients.len()-1).cloned().collect::<Vec::<f64>>(),
                 intercept: self.intercept,
@@ -371,7 +373,7 @@ impl LinearRegression {
         
 //score takes as input also the target, a dataset with row of length num_features+1
 //can be used for evaluating both training and test set
-impl LinearRegression {
+impl RidgeRegression {
     fn score(mut self, path_to_data: &String, config: &EnvironmentConfig) -> f64{
 
         if self.fitted != true {panic!("Can't compute score before fitting the model!");}
@@ -435,7 +437,7 @@ impl LinearRegression {
 
 
 //predict doesn't take as input the target, so a dataset with row of length num_features
-impl LinearRegression {
+impl RidgeRegression {
     fn predict(self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<f64>{
 
         if self.fitted != true {panic!("Can't compute predictions before fitting the model!");}
@@ -469,7 +471,6 @@ impl LinearRegression {
 
         env.spawn_remote_workers();
         
-
         let prediction = env.stream(source)
     
             .map(move |mut x| {
@@ -510,17 +511,18 @@ fn main() {
 
     let start = Instant::now();
 
-    let mut model = LinearRegression::new();
+    let mut model = RidgeRegression::new();
     
     let method = "SGD".to_string(); //"ADAM".to_string()
     let num_iters = 1000;
     let learn_rate = 1e-2;
     let batch_size = 500;
     let normalize = true;
+    let lambda = 0.004;
     let weight_decay = false;
 
     //return the trained model
-    model = model.fit(&training_set, method, num_iters, learn_rate, batch_size, normalize, weight_decay, &config);
+    model = model.fit(&training_set, method, num_iters, learn_rate, batch_size, normalize, lambda, weight_decay, &config);
 
     //compute the score over the training set
     let r2 = model.clone().score(&training_set, &config);
