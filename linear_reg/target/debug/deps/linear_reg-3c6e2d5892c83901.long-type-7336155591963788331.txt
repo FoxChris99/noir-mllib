@@ -1,1 +1,0 @@
-Stream<std::iter::Map<std::slice::Iter<'_, f64>, [closure@src\main.rs:128:49: 128:52]>, impl noir::operator::Operator<std::iter::Map<std::slice::Iter<'_, f64>, [closure@src\main.rs:128:49: 128:52]>>>
