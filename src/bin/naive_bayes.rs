@@ -21,8 +21,16 @@ pub struct TokenizedMessage{
     pub class: String,
 }
 
+//Struct for messages
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PredictedMessage{
+    pub text: String,
+    pub class: String,
+    pub prob: f64,
+}
+
 //Split a message text into its single words, removing duplicates
-pub fn tokenize(text: String) -> HashSet<String> {
+pub fn tokenize(text: &String) -> HashSet<String> {
     let mut set = HashSet::new();
     let tokens: Vec<String> = Regex::new(r"[A-Za-z0-9']+")
         .unwrap()
@@ -53,7 +61,7 @@ impl NaiveBayesClassifier{
         }
     }
 
-    fn token_probs(self, token: String) -> HashMap<String,f64> {
+    fn token_probs(&self, token: String) -> HashMap<String,f64> {
         let mut map: HashMap<String,f64> = HashMap::new();
         for class in self.messages_count.keys() {
             let count: i32;
@@ -64,6 +72,7 @@ impl NaiveBayesClassifier{
             let prob = (count as f64 + self.alpha) / (self.messages_count[class] as f64 + self.messages_count.keys().len() as f64 * self.alpha);
             map.insert(class.clone(), prob); 
         }
+        
         map
     }
 }
@@ -76,7 +85,7 @@ fn main(){
     let alpha = 1.;
 
     train_path = args[0].parse().expect("Invalid file path");
-    test_path = args[0].parse().expect("Invalid file path");
+    test_path = args[1].parse().expect("Invalid file path");
 
     let mut classifier = NaiveBayesClassifier::new(alpha);
 
@@ -96,7 +105,7 @@ fn main(){
     let res_token_counts = env.stream(source.clone())
         .rich_map({
             move |x|{
-                TokenizedMessage {tokens: tokenize(x.text), class: x.class}
+                TokenizedMessage {tokens: tokenize(&x.text), class: x.class}
             }
             }
         )
@@ -155,28 +164,45 @@ fn main(){
     let res = env.stream(source.clone())
     .rich_map({
         move |x|{
-            let model = classifier.clone();
+            let mut best_class: String="".to_string();
+            let mut max: f64=0.0;
+
             let mut probs_tot: HashMap<String,f64> = HashMap::new();
             for class in classifier.messages_count.keys(){
                probs_tot.insert(class.to_string(),0.);     
             } 
-            let tokenized = TokenizedMessage {tokens: tokenize(x.text), class: x.class};
+            let tokenized = TokenizedMessage {tokens: tokenize(&x.text), class: x.class};
 
             for token in tokenized.tokens{
                 let probs = classifier.token_probs(token);
-                for (key,val) in probs_tot{
+                for (key,val) in probs_tot.clone(){
                     if let Some(a) = probs.get(&key){
-                        probs_tot.insert(key, val+a);
+                        probs_tot.insert(key.to_string(), val+a.ln());
                     }
                 }    
             }
-            x
-             
+
+            //eprintln!("{:#?}",probs_tot); 
+            for(key,val) in probs_tot.clone(){
+                if val.exp()>max {
+                    best_class = key;
+                    max = val.exp();
+                }
+            }
+
+            let sum: f64 = probs_tot.values().map(|x| x.exp()).sum();
+            max /= sum;
+            PredictedMessage {text: x.text, class: best_class, prob: max}
         }    
         })    
     .collect_vec();
 
+    let start = Instant::now();
+    env.execute();
+    let elapsed = start.elapsed();
 
-    
-    
+    if let Some(res) = res.get(){
+        eprintln!("{:#?}",res);  
+    }
+    eprintln!("Elapsed: {elapsed:?}");  
 }
