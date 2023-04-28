@@ -5,127 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::{time::Instant};
 
 mod sample;
+mod matrix_utils;
 use sample::Sample;
+use matrix_utils::*;
 
-
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-
-fn matrix_product(a: &Vec<Vec<f64>>, b: &Vec<Vec<f64>>) -> Vec<Vec<f64>> {
-    let n = a.len();
-    let m = b[0].len();
-    let mut result = vec![vec![0.; m]; n];
-    for i in 0..n {
-        for j in 0..m {
-            for k in 0..b.len() {
-                result[i][j] += a[i][k] * b[k][j];
-            }
-        }
-    }
-    result
-}
-
-fn matrix_vector_product(matrix: &Vec<Vec<f64>>, vector: &Vec<f64>) -> Vec<f64> {
-    let mut result = Vec::with_capacity(matrix.len());
-    for row in matrix.iter() {
-        let mut sum = 0.0;
-        for (i, val) in row.iter().enumerate() {
-            sum += val * vector[i];
-        }
-        result.push(sum);
-    }
-    result
-}
-
-fn transpose(vec: &Vec<Vec<f64>>) -> Vec<Vec<f64>> {
-    let n = vec.len();
-    let m = vec[0].len();
-    let mut transposed = vec![vec![0.; n]; m];
-    for i in 0..m {
-        for j in 0..n {
-            transposed[i][j] = vec[j][i];
-        }
-    }
-    transposed
-}
-
-fn invert_matrix(a: &Vec<Vec<f64>>) -> Vec<Vec<f64>> {
-    let n = a.len();
-    let mut a_augmented = augment_matrix(a);
-    let mut b = create_identity_matrix(n);
-    for i in 0..n {
-        let pivot_row = find_pivot_row(&a_augmented, i);
-        swap_rows(&mut a_augmented, i, pivot_row);
-        swap_rows(&mut b, i, pivot_row);
-        for j in i + 1..n {
-            let factor = a_augmented[j][i] / a_augmented[i][i];
-            subtract_rows(&mut a_augmented, i, j, factor);
-            subtract_rows(&mut b, i, j, factor);
-        }
-    }
-    for i in (0..n).rev() {
-        for j in i + 1..n {
-            let factor = a_augmented[i][j];
-            subtract_rows(&mut b, j, i, factor);
-        }
-        let factor = 1.0 / a_augmented[i][i];
-        multiply_row(&mut b, i, factor);
-    }
-    b
-}
-
-fn augment_matrix(a: &Vec<Vec<f64>>) -> Vec<Vec<f64>> {
-    let n = a.len();
-    let mut a_augmented = a.clone();
-    for i in 0..n {
-        a_augmented[i].extend_from_slice(&create_zero_vector(n - 1));
-    }
-    a_augmented
-}
-
-fn create_identity_matrix(n: usize) -> Vec<Vec<f64>> {
-    let mut matrix = vec![vec![0.0; n]; n];
-    for i in 0..n {
-        matrix[i][i] = 1.0;
-    }
-    matrix
-}
-
-fn find_pivot_row(a: &Vec<Vec<f64>>, col: usize) -> usize {
-    let mut max_index = col;
-    let mut max_value = a[col][col].abs();
-    for i in col + 1..a.len() {
-        let value = a[i][col].abs();
-        if value > max_value {
-            max_index = i;
-            max_value = value;
-        }
-    }
-    max_index
-}
-
-fn swap_rows(a: &mut Vec<Vec<f64>>, i: usize, j: usize) {
-    let temp = a[i].clone();
-    a[i] = a[j].clone();
-    a[j] = temp;
-}
-
-fn subtract_rows(a: &mut Vec<Vec<f64>>, from: usize, to: usize, factor: f64) {
-    for j in 0..a[0].len() {
-        a[to][j] -= factor * a[from][j];
-    }
-}
-
-fn multiply_row(a: &mut Vec<Vec<f64>>, row: usize, factor: f64) {
-    for j in 0..a[0].len() {
-        a[row][j] *= factor;
-    }
-}
-
-fn create_zero_vector(n: usize) -> Vec<f64> {
-    vec![0.0; n]
-}
 
 //State for SGD
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -210,6 +93,146 @@ impl LinearRegression {
             method: "".to_string(),
         }}
 }
+
+
+impl LinearRegression {
+    fn fit_ols(mut self, path_to_data: &String, normalize: bool, config: &EnvironmentConfig)->LinearRegression{
+            
+            self.fitted = true;
+
+            //to normalize the samples we need their mean and std
+            if normalize==true{
+
+                self.normalization = true;
+    
+                let source = CsvSource::<Sample>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+                let mut env0 = StreamEnvironment::new(config.clone());
+                env0.spawn_remote_workers();
+                
+                //get the mean of all the features + target and their second moments E[x^2]
+                let features_mean = env0.stream(source)
+                .map(move |mut x| 
+                    {   
+                        //push the square of the features to get both E[x] and E[x^2] 
+                        x.0.extend(x.0.iter().map(|xi| xi.powi(2)).collect::<Vec<f64>>());
+                        x
+                    })
+                .group_by_avg(|_x| true, |x| x.clone()).drop_key().collect_vec();
+    
+                env0.execute();
+                
+                let mut moments:Vec<f64> = vec![0.;1];
+    
+                if let Some(means_vector) = features_mean.get() {
+                    moments = means_vector[0].0.clone();
+                }
+                
+                self.train_mean= moments.iter().take(moments.len()/2).cloned().collect::<Vec<f64>>();
+                
+                self.train_std = moments.iter().skip(moments.len()/2).zip(self.train_mean.iter()).map(|(e2,avg)| (e2-avg.powi(2)).sqrt()).collect();
+             }
+
+
+            let train_mean = self.train_mean.clone();
+            let train_std = self.train_std.clone();
+
+            let source = CsvSource::<Sample>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+            let mut env = StreamEnvironment::new(config.clone());
+            env.spawn_remote_workers();
+            
+            self.method = "OLS".to_string();
+            //return the weights computed with OLS thanks to the model.fit method
+             let fit = env.stream(source.clone())
+                .replay(
+                    2,
+                    StateSGD::new(),
+
+                    move |s, state| 
+                    {
+                        //shuffle the samples
+                        s.shuffle()
+                        //each replica filter a number of samples equal to batch size and
+                        //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
+                        .rich_filter_map({
+                            let mut local_matrix: Vec<Vec<f64>> = Vec::new();
+                            let mut target = Vec::<f64>::new();
+                            let mut flag_result = 0;
+                            move |mut x|{
+                                //first iteration: populate the matrix
+                                if state.get().epoch==0{
+                                    if self.normalization==true{
+                                        //scale the features and the target
+                                        x.0 = x.0.iter().zip(self.train_mean.iter().zip(self.train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
+                                    }
+                                    let last = x.0.len()-1;
+                                    target.push(x.0[last]);
+                                    x.0[last] = 1.;
+                                    local_matrix.push(x.0);                               
+     
+                                    None
+                                }
+                                //second iteration: compute local weights
+                                else{
+                                    if flag_result==0{
+                                        flag_result = 1;
+                                        let (mut q,mut r) = qr_decomposition(&local_matrix);
+                                        r = invert_r(&r);
+                                        q = transpose(&q);
+                                        let weights_ols = matrix_vector_product(&matrix_product(&r, &q), &target);
+                                        Some(Sample(weights_ols))
+                                        //Some(Sample(ols(&local_matrix, &target)))
+                                    } 
+                                    else {
+                                        None
+                                    } }
+                            }})
+                        //the average of the gradients is computed and forwarded as a single value
+                        .group_by_avg(|_x| true, |x| x.clone()).drop_key().max_parallelism(1)
+                    },
+
+                    move |local_grad: &mut Sample, avg_grad| 
+                    {   
+                        *local_grad = avg_grad;
+                    },
+
+                    move |state, local_grad| 
+                    {   
+                        //we don't want to read empty replica gradient (this should be solved by using the max_parallelism(1) above)
+                        if local_grad.0.len()!=0{
+                        state.global_grad = local_grad.0.clone();}
+                    },
+
+                    move|state| 
+                    {   
+                        state.epoch+=1;
+                        state.weights = state.global_grad.clone();
+                        state.epoch<2
+                    },
+
+                )
+                .collect_vec();
+
+        env.execute();
+
+        if let Some(res) = fit.get() {
+            let state = &res[0];
+            self.coefficients = state.weights.clone();
+            self.intercept = state.weights[self.coefficients.len()-1];}
+
+            LinearRegression {
+                coefficients: self.coefficients.clone(),
+                features_coef: self.coefficients.iter().take(self.coefficients.len()-1).cloned().collect::<Vec::<f64>>(),
+                intercept: self.intercept,
+                score: 0.,
+                normalization: self.normalization,
+                train_mean: train_mean,
+                train_std: train_std,
+                fitted: self.fitted,
+                method: "OLS".to_string()
+            }
+        }
+}
+
 
 //train the model with sgd or adam
 impl LinearRegression {
@@ -404,9 +427,9 @@ impl LinearRegression {
                                         //scale the features and the target
                                         x.0 = x.0.iter().zip(self.train_mean.iter().zip(self.train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
                                     }
-                                    target.push(x.0[x.0.len()-1]);
-                                    x.0.pop();
-                                    x.0.push(1.);
+                                    let last = x.0.len()-1;
+                                    target.push(x.0[last]);
+                                    x.0[last] = 1.;
                                     local_matrix.push(x.0);                               
      
                                     None
@@ -416,11 +439,11 @@ impl LinearRegression {
                                     if flag_result==0{
                                         flag_result = 1;
                                         let local_transpose = transpose(&local_matrix);
-                                        let mut matrix: Vec<Vec<f64>> = matrix_product(&local_transpose, &local_matrix);
-                                        matrix = invert_matrix(&matrix);
-                                        matrix = matrix_product(&matrix, &local_transpose);
-                                        let weights_ols = matrix_vector_product(&matrix,&target);
-                                        Some(Sample(weights_ols))
+                                        local_matrix = matrix_product(&local_transpose, &local_matrix);
+                                        local_matrix = invert_matrix(&local_matrix);
+                                        local_matrix = matrix_product(&local_matrix, &local_transpose);
+                                        let weights_ols = matrix_vector_product(&local_matrix,&target);
+                                       Some(Sample(weights_ols))
                                     } 
                                     else {
                                         None
@@ -734,12 +757,13 @@ fn main() {
     let num_iters = 50;
     let learn_rate = 1e-1;
     let batch_size = 100;
-    let normalize = true;
+    let normalize = false;
     let weight_decay = false;
 
     //return the trained model
     model = model.fit(&training_set, method, num_iters, learn_rate, batch_size, normalize, weight_decay, &config);
 
+    //model = model.fit_ols(&training_set, normalize, &config);
     //compute the score over the training set
     let r2 = model.clone().score(&training_set, &config);
 

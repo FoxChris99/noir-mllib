@@ -1,29 +1,29 @@
-// use ndarray::{Array1, Array2};
-// use ndarray_linalg::{QR, Solve};
+use ndarray::{Array1, Array2};
+use ndarray_linalg::{QR, Solve};
 
-// pub fn ols(x: &Vec<Vec<f64>>, y: &Vec<f64>) -> Vec<f64> {
-//     // Convert input data to ndarray
-//     let x = Array2::from_shape_vec((x.len(), x[0].len()), x.iter().flatten().copied().collect()).unwrap();
-//     let y = Array1::from_shape_vec(y.len(), y.clone()).unwrap();
+pub fn ols(x: &Vec<Vec<f64>>, y: &Vec<f64>) -> Vec<f64> {
+    // Convert input data to ndarray
+    let x = Array2::from_shape_vec((x.len(), x[0].len()), x.iter().flatten().copied().collect()).unwrap();
+    let y = Array1::from_shape_vec(y.len(), y.clone()).unwrap();
 
-//     // Compute QR decomposition of x
-//     //let qr = x.qr().unwrap();
-//     let (q,r) = x.qr().unwrap();
+    // Compute QR decomposition of x
+    //let qr = x.qr().unwrap();
+    let (q,r) = x.qr().unwrap();
 
-//     // Compute Q'y
-//     //let qy = qr.0.t().dot(&y);
-//     let qy: Array1<f64> = q.t().dot(&y);
+    // Compute Q'y
+    //let qy = qr.0.t().dot(&y);
+    let qy: Array1<f64> = q.t().dot(&y);
 
-//     // Compute Q'y
-//     //qy = qr.1.t().dot(&y);
+    // Compute Q'y
+    //qy = qr.1.t().dot(&y);
 
-//     // Solve Rx = Q'y
-//     let b = r.solve_into(qy).unwrap();
+    // Solve Rx = Q'y
+    let b = r.solve_into(qy).unwrap();
 
-//     // Return solution vector
-//     //b.axis_iter(Axis(0)).map(|row| row[0]).collect()
-//     b.to_vec()
-// }
+    // Return solution vector
+    //b.axis_iter(Axis(0)).map(|row| row[0]).collect()
+    b.to_vec()
+}
 
 pub fn qr_decomposition(a: &Vec<Vec<f64>>) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let n = a.len();

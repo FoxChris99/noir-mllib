@@ -173,12 +173,12 @@ impl LinearRegression {
                                 else{
                                     if flag_result==0{
                                         flag_result = 1;
-                                        let (mut q,mut r) = qr_decomposition(&local_matrix);
-                                        r = invert_r(&r);
-                                        q = transpose(&q);
-                                        let weights_ols = matrix_vector_product(&matrix_product(&r, &q), &target);
-                                        Some(Sample(weights_ols))
-                                        //Some(Sample(ols(&local_matrix, &target)))
+                                        // let (mut q,mut r) = qr_decomposition(&local_matrix);
+                                        // r = invert_r(&r);
+                                        // q = transpose(&q);
+                                        // let weights_ols = matrix_vector_product(&matrix_product(&r, &q), &target);
+                                        // Some(Sample(weights_ols))
+                                        Some(Sample(ols(&local_matrix, &target)))
                                     } 
                                     else {
                                         None
@@ -759,9 +759,9 @@ fn main() {
     let weight_decay = false;
 
     //return the trained model
-    model = model.fit(&training_set, method, num_iters, learn_rate, batch_size, normalize, weight_decay, &config);
+    //model = model.fit(&training_set, method, num_iters, learn_rate, batch_size, normalize, weight_decay, &config);
 
-    //model = model.fit_ols(&training_set, normalize, &config);
+    model = model.fit_ols(&training_set, normalize, &config);
     //compute the score over the training set
     let r2 = model.clone().score(&training_set, &config);
 

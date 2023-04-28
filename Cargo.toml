@@ -8,10 +8,10 @@ edition = "2021"
 [dependencies]
 csv = "1.2.1"
 mimalloc = "0.1.34"
-ndarray = "0.15.6"
 noir = { git = "https://github.com/deib-polimi/noir.git", version = "0.1.0" }
 rand = "0.8.5"
 serde = "1.0.159"
 nalgebra = "0.32.2"
-ndarray-linalg = "0.15"
+ndarray = { version = "0.13.1", features = ["serde"] }
 regex = "1.8.1"
+ndarray-linalg = "0.12"
