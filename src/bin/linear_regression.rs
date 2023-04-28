@@ -4,10 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use std::{time::Instant};
 
-mod sample;
-mod matrix_utils;
-use sample::Sample;
-use matrix_utils::*;
+use noir_ml::sample::Sample;
+use noir_ml::matrix_utils::*;
 
 
 //State for SGD

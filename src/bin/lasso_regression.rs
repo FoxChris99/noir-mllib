@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use std::{time::Instant};
 
-mod sample;
-use sample::Sample;
+use noir_ml::sample::Sample;
 
 
 #[global_allocator]

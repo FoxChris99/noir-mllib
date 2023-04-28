@@ -675,21 +675,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "linear_reg"
-version = "0.1.0"
-dependencies = [
- "csv",
- "mimalloc",
- "nalgebra",
- "ndarray",
- "ndarray-linalg",
- "noir",
- "rand",
- "regex",
- "serde",
-]
-
-[[package]]
 name = "link-cplusplus"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -859,6 +844,21 @@ dependencies = [
  "typemap_rev",
  "whoami",
  "wyhash",
+]
+
+[[package]]
+name = "noir_ml"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "mimalloc",
+ "nalgebra",
+ "ndarray",
+ "ndarray-linalg",
+ "noir",
+ "rand",
+ "regex",
+ "serde",
 ]
 
 [[package]]
