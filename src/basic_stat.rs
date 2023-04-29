@@ -1,64 +1,15 @@
 use noir::prelude::*;
+use crate::sample::Sample;
 
-use serde::{Deserialize, Serialize};
-
-use std::time::Instant;
-use std::ops::{AddAssign,Div};
-
-
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-#[derive(Clone, Serialize, Deserialize, Default, Debug)]
-struct Sample(Vec<f64>);
-
-impl AddAssign for Sample {
-    fn add_assign(&mut self, other: Self) {
-        assert_eq!(self.0.len(), other.0.len(), "Vectors must have the same length");
-
-        for (i, element) in other.0.into_iter().enumerate() {
-            self.0[i] += element;
-        }
-    }
-}
-
-impl Div<f64> for Sample {
-    type Output = Self;
-
-    fn div(self, other: f64) -> Self::Output {
-        
-        let mut result = Sample(vec![0.0; self.0.len()]);
-        for (i, element) in self.0.into_iter().enumerate() {
-            result.0[i] = element / other;
-        }
-
-        result
-    }
-}
-
-fn main() {
-    let (config, args) = EnvironmentConfig::from_args();
-
-
-    let path_to_data: String;
+//get mean and std of the columns of a dataset
+pub fn get_moments(config: &EnvironmentConfig, path_to_data: &String)->(Vec<f64>, Vec<f64>) {
     
-
-    match args.len() {
-
-        1 => {path_to_data = args[0].parse().expect("Invalid file path");}
-
-        _ => panic!("Wrong number of arguments!"),
-    }
-
-
     //read from csv source
     let source = CsvSource::<Sample>::new(path_to_data).has_headers(true).delimiter(b',');
-
-
-    let mut env0 = StreamEnvironment::new(config.clone());
-    env0.spawn_remote_workers();
+    let mut env = StreamEnvironment::new(config.clone());
+    env.spawn_remote_workers();
     //get the mean of all the features + target and the second moment E[x^2]
-    let  res = env0.stream(source.clone())
+    let  res = env.stream(source)
     .map( |mut x| 
         {   
             //add the features^2 to get the second moment
@@ -66,15 +17,10 @@ fn main() {
             x
         })
     .group_by_avg(|_x| true, |x| x.clone()).drop_key().collect_vec();
-    
-    let start = Instant::now();
-    env0.execute();
-    let elapsed = start.elapsed();
-    
-    let mut moments = Vec::<f64>::new();
 
-    if let Some(res) = res.get() {
-        moments = res[0].0.clone();}
+    env.execute();
+    
+    let moments = res.get().unwrap()[0].0.clone();
 
     let dim = moments.len()/2;
     
@@ -83,7 +29,18 @@ fn main() {
 
     std = std.iter().zip(mean.iter()).map(|(e2,avg)| (e2-avg.powi(2)).sqrt()).collect();
     
-    print!("\nMean: {:?}\n\nStd: {:?}\n\n", mean, std);
-    eprintln!("\nElapsed: {elapsed:?}");
+    (mean, std)
 
+}
+
+
+
+
+pub fn sigmoid(v: f64) -> f64{
+    if v >= 0.{
+        1./(1. + (-v).exp())
+    } 
+    else{ 
+        v.exp()/(1. + v.exp())
+    }
 }

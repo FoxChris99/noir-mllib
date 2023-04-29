@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::ops::{AddAssign,Div,Sub,Mul,Add, SubAssign, DivAssign, MulAssign};
 
 
-
 //create our custom type of vector which represents a sample of the dataset
 #[derive(Clone, Serialize, Deserialize, Default, Debug)]
 pub struct Sample(pub Vec<f64>);

@@ -1,29 +1,29 @@
-use ndarray::{Array1, Array2};
-use ndarray_linalg::{QR, Solve};
+// use ndarray::{Array1, Array2};
+// use ndarray_linalg::{QR, Solve};
 
-pub fn ols(x: &Vec<Vec<f64>>, y: &Vec<f64>) -> Vec<f64> {
-    // Convert input data to ndarray
-    let x = Array2::from_shape_vec((x.len(), x[0].len()), x.iter().flatten().copied().collect()).unwrap();
-    let y = Array1::from_shape_vec(y.len(), y.clone()).unwrap();
+// pub fn ols(x: &Vec<Vec<f64>>, y: &Vec<f64>) -> Vec<f64> {
+//     // Convert input data to ndarray
+//     let x = Array2::from_shape_vec((x.len(), x[0].len()), x.iter().flatten().copied().collect()).unwrap();
+//     let y = Array1::from_shape_vec(y.len(), y.clone()).unwrap();
 
-    // Compute QR decomposition of x
-    //let qr = x.qr().unwrap();
-    let (q,r) = x.qr().unwrap();
+//     // Compute QR decomposition of x
+//     //let qr = x.qr().unwrap();
+//     let (q,r) = x.qr().unwrap();
 
-    // Compute Q'y
-    //let qy = qr.0.t().dot(&y);
-    let qy: Array1<f64> = q.t().dot(&y);
+//     // Compute Q'y
+//     //let qy = qr.0.t().dot(&y);
+//     let qy: Array1<f64> = q.t().dot(&y);
 
-    // Compute Q'y
-    //qy = qr.1.t().dot(&y);
+//     // Compute Q'y
+//     //qy = qr.1.t().dot(&y);
 
-    // Solve Rx = Q'y
-    let b = r.solve_into(qy).unwrap();
+//     // Solve Rx = Q'y
+//     let b = r.solve_into(qy).unwrap();
 
-    // Return solution vector
-    //b.axis_iter(Axis(0)).map(|row| row[0]).collect()
-    b.to_vec()
-}
+//     // Return solution vector
+//     //b.axis_iter(Axis(0)).map(|row| row[0]).collect()
+//     b.to_vec()
+// }
 
 pub fn qr_decomposition(a: &Vec<Vec<f64>>) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let n = a.len();
@@ -83,7 +83,6 @@ pub fn matrix_product(a: &Vec<Vec<f64>>, b: &Vec<Vec<f64>>) -> Vec<Vec<f64>> {
         for j in 0..m {
             for k in 0..b.len() {
                 result[i][j] += a[i][k] * b[k][j];
-                //result[i][j] += a[k][i] * b[k][j];
             }
         }
     }
@@ -231,4 +230,64 @@ fn multiply_row(a: &mut Vec<Vec<f64>>, row: usize, factor: f64) {
 
 pub fn create_zero_vector(n: usize) -> Vec<f64> {
     vec![0.0; n]
+}
+
+
+
+
+pub fn invert_lu(mat: &mut Vec<Vec<f64>>) -> Vec<Vec<f64>> {
+    let n = mat.len();
+    let mut pivots = vec![0; n];
+
+    // perform LU decomposition with partial pivoting
+    let mut sign = 1.0;
+    for i in 0..n {
+        let mut max = 0.0;
+        let mut imax = i;
+        for j in i..n {
+            let abs = mat[j][i].abs();
+            if abs > max {
+                max = abs;
+                imax = j;
+            }
+        }
+        if imax != i {
+            mat.swap(i, imax);
+            sign = -sign;
+        }
+        pivots[i] = imax;
+        for j in (i + 1)..n {
+            let ratio = mat[j][i] / mat[i][i];
+            mat[j][i] = ratio;
+            for k in (i + 1)..n {
+                mat[j][k] -= ratio * mat[i][k];
+            }
+        }
+    }
+
+    // solve the linear system for each column of the identity matrix
+    let mut inv = vec![vec![0.0; n]; n];
+    for j in 0..n {
+        let mut b = vec![0.0; n];
+        b[j] = 1.0;
+        for i in 0..n {
+            let mut sum = b[pivots[i]];
+            for k in 0..i {
+                sum -= mat[i][k] * b[pivots[k]];
+            }
+            b[pivots[i]] = sum;
+        }
+        for i in (0..n).rev() {
+            let mut sum = b[pivots[i]];
+            for k in (i + 1)..n {
+                sum -= mat[i][k] * b[pivots[k]];
+            }
+            b[pivots[i]] = sum / mat[i][i];
+        }
+        for i in 0..n {
+            inv[i][j] = b[i];
+        }
+    }
+
+    inv
 }
