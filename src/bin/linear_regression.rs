@@ -216,7 +216,7 @@ fn main() {
     
     //hyper_parameters for the iterative method model.fit
     let method = "SGD".to_string(); //"ADAM".to_string()
-    let num_iters = 100;
+    let num_iters = 30;
     let learn_rate = 1e-1;
     let batch_size = 1000;
     let weight_decay = false;
@@ -230,17 +230,24 @@ fn main() {
     //fitting with ols
     model = model.fit_ols(&training_set, false, &config);
 
+    let elapsed = start.elapsed();
+
+    let start_score = Instant::now();
     //compute the score over the training set
     let r2 = model.clone().score(&training_set, &config);
-
+    let elapsed_score = start_score.elapsed();
+    
+    let start_pred = Instant::now();
     let predictions = model.clone().predict(&data_to_predict, &config);
-
-    let elapsed = start.elapsed();
+    let elapsed_pred = start_pred.elapsed();
+    
 
     print!("\nCoefficients: {:?}\n", model.features_coef);
     print!("Intercept: {:?}\n", model.intercept);  
     print!("\nR2 score: {:?}\n", r2);
     print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<f64>>());
-    eprintln!("\nElapsed: {elapsed:?}");    
+    eprintln!("\nElapsed fit: {elapsed:?}");
+    eprintln!("\nElapsed score: {elapsed_score:?}"); 
+    eprintln!("\nElapsed pred: {elapsed_pred:?}");     
 
 }
