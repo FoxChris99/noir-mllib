@@ -1,7 +1,7 @@
 use noir::prelude::*;
 
 use serde::{Deserialize, Serialize};
-
+use rand::Rng;
 use crate::sample::Sample;
 use crate::basic_stat::sigmoid;
 
@@ -28,7 +28,7 @@ impl StateSGD {
         }}}
 
 
-pub fn linear_sgd(weight_decay: bool, learn_rate: f64, batch_size: usize, num_iters: usize, 
+pub fn linear_sgd(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
     path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig) 
     -> StateSGD {
 
@@ -46,13 +46,11 @@ pub fn linear_sgd(weight_decay: bool, learn_rate: f64, batch_size: usize, num_it
                 s.shuffle()
                 //each replica filter a number of samples equal to batch size and
                 //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
-                .rich_filter_map({
-                    let mut count = 0;
+                .rich_filter_map(
                     move |mut x|{
                         let dim = x.0.len();
-                        //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
-                        if count < batch_size * (state.get().epoch+1) {
-                            count+=1;
+                        //each iteration just a fraction of data is considered
+                        if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction){
                             if normalization==true{
                                 //scale the features and the target
                                 x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
@@ -71,16 +69,19 @@ pub fn linear_sgd(weight_decay: bool, learn_rate: f64, batch_size: usize, num_it
                             let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
                             let error = prediction - y;
                             let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();
-                            Some(Sample(sample_grad))
-                            }
-                        else {None}}})
+                            Some(Sample(sample_grad))}
+                        else{
+                            None
+                        }
+            })
                 //the average of the gradients is computed and forwarded as a single value
-                .group_by_avg(|_x| true, |x| x.clone()).drop_key().max_parallelism(1)
+                .group_by_avg(|_x| true, |x| x.clone()).drop_key()//.max_parallelism(1)
             },
 
             move |local_grad: &mut Sample, avg_grad| 
             {   
-                *local_grad = avg_grad;
+                if avg_grad.0.len()!=0{
+                *local_grad = avg_grad;}
             },
 
             move |state, local_grad| 
@@ -147,7 +148,7 @@ impl StateSgdLogistic {
 
 
 
-pub fn logistic_sgd(num_classes: usize, weight_decay: bool, learn_rate: f64, batch_size: usize, num_iters: usize, 
+pub fn logistic_sgd(num_classes: usize, weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
     path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig) 
     -> StateSgdLogistic {
 
@@ -166,12 +167,10 @@ pub fn logistic_sgd(num_classes: usize, weight_decay: bool, learn_rate: f64, bat
             //each replica filter a number of samples equal to batch size and
             //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
             .rich_filter_map({
-                let mut count = 0;
                 move |mut x|{
                     let dim = x.0.len();
                     //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
-                    if count < batch_size * (state.get().epoch+1) {
-                        count+=1;
+                    if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) {
                         //the target is in the last element of each sample, y one hot encoding
                         let mut y = vec![0;num_classes];
                         y[x.0[dim-1] as usize] = 1; //assigned before normalization because it's a classification task
@@ -254,3 +253,36 @@ pub fn logistic_sgd(num_classes: usize, weight_decay: bool, learn_rate: f64, bat
     let state = fit.get().unwrap()[0].clone();
     state
 }
+
+
+
+
+
+// .rich_filter_map({
+//     let mut count = 0;
+//     move |mut x|{
+//         let dim = x.0.len();
+//         //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
+//         if count < batch_size * (state.get().epoch+1) {
+//             count+=1;
+//             if normalization==true{
+//                 //scale the features and the target
+//                 x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
+//                 }
+//             //the target is in the last element of each sample
+//             let y: f64 = x.0[dim-1]; 
+//             //switch the target with a 1 for the intercept
+//             x.0[dim-1] = 1.;
+
+//             let mut current_weights = &state.get().weights;
+//             let vec = vec![0.;dim];
+//             if state.get().epoch == 0{
+//                 current_weights = &vec;
+//             }
+
+//             let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
+//             let error = prediction - y;
+//             let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();
+//             Some(Sample(sample_grad))
+//             }
+//         else {None}}})

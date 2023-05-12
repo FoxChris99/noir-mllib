@@ -27,6 +27,7 @@ pub fn ols_training(path_to_data: &String, normalization: bool, train_mean: Vec<
                 s.shuffle()
                 .rich_filter_map({
                     let mut local_matrix: Vec<Vec<f64>> = Vec::new();
+                    //let mut local_matrix: Vec<f64> = Vec::new();
                     let mut target = Vec::<f64>::new();
                     let mut flag_result = 0;
                     move |mut x|{
@@ -41,7 +42,7 @@ pub fn ols_training(path_to_data: &String, normalization: bool, train_mean: Vec<
                             //switch the target with the intercept
                             x.0[last] = 1.;
                             local_matrix.push(x.0);                               
-
+                            //local_matrix.extend(x.0);  
                             None
                         }
                         //second iteration: compute local weights
@@ -54,6 +55,16 @@ pub fn ols_training(path_to_data: &String, normalization: bool, train_mean: Vec<
                                 //local_matrix = invert_matrix(&local_matrix);
                                 local_matrix = matrix_product(&local_matrix, &local_transpose);
                                 let weights_ols = matrix_vector_product(&local_matrix,&target);
+                                // let cols = x.0.len();
+                                // let rows = target.len();
+                                // let mut local_transpose = transpose_mat(&local_matrix, rows, cols);
+                                // print!("TRANSPOSE");
+                                // local_matrix = vec_product(&local_transpose, &local_matrix);
+                                // print!("FIRST PRODUCT");
+                                // invert_lu_inplace(&mut local_matrix, cols);
+                                // print!("INVERSE");
+                                // local_transpose = vec_product(&local_matrix, &local_transpose);
+                                // let weights_ols = mat_vec_product(&local_transpose,&target, cols, rows);//cols rows switched
                                 Some(Sample(weights_ols))
                             } 
                             else {

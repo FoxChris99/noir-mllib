@@ -291,3 +291,113 @@ pub fn invert_lu(mat: &mut Vec<Vec<f64>>) -> Vec<Vec<f64>> {
 
     inv
 }
+
+
+
+
+pub fn invert_lu_inplace(mat: &mut [f64], n: usize) {
+    let mut pivots = vec![0; n];
+
+    // perform LU decomposition with partial pivoting
+    let mut sign = 1.0;
+    for i in 0..n {
+        let mut max = 0.0;
+        let mut imax = i;
+        for j in i..n {
+            let abs = mat[j * n + i].abs();
+            if abs > max {
+                max = abs;
+                imax = j;
+            }
+        }
+        if imax != i {
+            for j in 0..n {
+                mat.swap(i * n + j, imax * n + j);
+            }
+            sign = -sign;
+        }
+        pivots[i] = imax;
+        for j in (i + 1)..n {
+            let ratio = mat[j * n + i] / mat[i * n + i];
+            mat[j * n + i] = ratio;
+            for k in (i + 1)..n {
+                mat[j * n + k] -= ratio * mat[i * n + k];
+            }
+        }
+    }
+
+    // solve the linear system for each column of the identity matrix
+    for j in 0..n {
+        let mut b = vec![0.0; n];
+        b[j] = 1.0;
+        for i in 0..n {
+            let mut sum = b[pivots[i]];
+            for k in 0..i {
+                sum -= mat[i * n + k] * b[pivots[k]];
+            }
+            b[pivots[i]] = sum;
+        }
+        for i in (0..n).rev() {
+            let mut sum = b[pivots[i]];
+            for k in (i + 1)..n {
+                sum -= mat[i * n + k] * b[pivots[k]];
+            }
+            mat[i * n + j] = sum / mat[i * n + i];
+        }
+    }
+}
+
+
+//matrix product storing the result in the second vectors
+pub fn vec_product_inplace(v1: &Vec<f64>, v2: &mut Vec<f64>) {
+    assert_eq!(v1.len(), v2.len(), "Vectors must have the same length.");
+
+    let n = v1.len();
+
+    for i in 0..n {
+        for j in 0..n {
+            v2[i*n + j] = v1[i] * v2[j];
+        }
+    }
+}
+
+
+pub fn transpose_mat(mat: &Vec<f64>, nrows: usize, ncols: usize) -> Vec<f64> {
+    let mut transposed = vec![0.0; mat.len()];
+    for i in 0..nrows {
+        for j in 0..ncols {
+            let idx1 = i * ncols + j;
+            let idx2 = j * nrows + i;
+            transposed[idx2] = mat[idx1];
+        }
+    }
+    transposed
+}
+
+
+pub fn mat_vec_product(mat: &Vec<f64>, vec: &Vec<f64>, nrows: usize, ncols: usize) -> Vec<f64> {
+    assert_eq!(mat.len(), nrows * ncols);
+    assert_eq!(vec.len(), ncols);
+    let mut res = vec![0.0; nrows];
+    for i in 0..nrows {
+        for j in 0..ncols {
+            res[i] += mat[i * ncols + j] * vec[j];
+        }
+    }
+    res
+}
+
+
+pub fn vec_product(v1: &Vec<f64>, v2: &Vec<f64>) -> Vec<f64> {
+
+    let n = v1.len();
+    let mut res = vec![0.0; n*n];
+
+    for i in 0..n {
+        for j in 0..n {
+            res[i*n + j] = v1[i] * v2[j];
+        }
+    }
+
+    res
+}

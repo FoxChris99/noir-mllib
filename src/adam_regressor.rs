@@ -1,6 +1,6 @@
 use noir::prelude::*;
 use serde::{Deserialize, Serialize};
-
+use rand::Rng;
 use crate::sample::Sample;
 use crate::basic_stat::sigmoid;
 
@@ -32,7 +32,7 @@ impl StateAdam {
         }}}
 
 
-pub fn linear_adam(weight_decay: bool, learn_rate: f64, batch_size: usize, num_iters: usize, 
+pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
     path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig) 
     -> StateAdam {
 
@@ -54,12 +54,10 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, batch_size: usize, num_i
                 //each replica filter a number of samples equal to batch size and
                 //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
                 .rich_filter_map({
-                    let mut count = 0;
                     move |mut x|{
                         let dim = x.0.len();
                         //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
-                        if count < batch_size * (state.get().epoch+1) {
-                            count+=1;
+                        if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) {
                             if normalization==true{
                                 //scale the features and the target
                                 x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
@@ -168,7 +166,7 @@ impl StateAdamLogistic {
         }}}
 
 
-pub fn logistic_adam(num_classes: usize, weight_decay: bool, learn_rate: f64, batch_size: usize, num_iters: usize, 
+pub fn logistic_adam(num_classes: usize, weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
     path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig) 
     -> StateAdamLogistic {
 
@@ -190,12 +188,10 @@ pub fn logistic_adam(num_classes: usize, weight_decay: bool, learn_rate: f64, ba
                         //each replica filter a number of samples equal to batch size and
                         //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
                         .rich_filter_map({
-                            let mut count = 0;
                             move |mut x|{
                                 let dim = x.0.len();
                                 //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
-                                if count < batch_size * (state.get().epoch+1) {
-                                    count+=1;
+                                if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) {
                                     //the target is in the last element of each sample, y one hot encoding
                                     let mut y = vec![0;num_classes];
                                     y[x.0[dim-1] as usize] = 1; //assigned before normalization because it's a classification task
