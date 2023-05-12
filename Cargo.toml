@@ -15,3 +15,5 @@ nalgebra = "0.32.2"
 ndarray = { version = "0.14", features = ["serde"] }
 regex = "1.8.1"
 ndarray-linalg = { version = "0.13", features = ["openblas-static"]}
+ordered-float = "3.7.0"
+itertools = "0.10.5"
