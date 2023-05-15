@@ -38,8 +38,8 @@ impl LogisticRegression {
 
 //train the model with sgd or adam
 impl LogisticRegression {
-    fn fit(mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, batch_size: usize, normalize: bool, weight_decay: bool, config: &EnvironmentConfig)
-    -> LogisticRegression{
+    fn fit(&mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, data_fraction: f64, normalize: bool, weight_decay: bool, config: &EnvironmentConfig)
+        {
             
         self.fitted = true;
 
@@ -55,25 +55,18 @@ impl LogisticRegression {
 
             "ADAM" | "adam"  =>
             {    
-            let state = logistic_adam(self.num_classes, weight_decay, learn_rate, batch_size, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = logistic_adam(self.num_classes, weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
             weights = state.weights;
             },
 
             "SGD" | "sgd" | _ => 
             {
-            let state = logistic_sgd(self.num_classes, weight_decay, learn_rate, batch_size, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = logistic_sgd(self.num_classes, weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
             weights = state.weights;
             }
         }    
 
-        LogisticRegression {
-            coefficients: weights.clone(),
-            normalization: self.normalization,
-            train_mean: self.train_mean,
-            train_std: self.train_std,
-            fitted: self.fitted,
-            num_classes: self.num_classes
-        }
+        self.coefficients = weights.clone();
     }
 }     
 
@@ -83,28 +76,34 @@ impl LogisticRegression {
 //score takes as input also the target, a dataset with row of length num_features+1
 //can be used for evaluating both training and test set
 impl LogisticRegression {
-    fn score(self, path_to_data: &String, config: &EnvironmentConfig) -> f64{
+    fn score(&self, path_to_data: &String, config: &EnvironmentConfig) -> f64{
 
         if self.fitted != true {panic!("Can't compute score before fitting the model!");}
         let source = CsvSource::<Sample>::new(path_to_data).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
-    
+
+        let normalization = self.normalization;
+        let train_mean = self.train_mean.clone();
+        let train_std = self.train_std.clone();
+        let coefficients = self.coefficients.clone();
+        let num_classes = self.num_classes.clone();
+
         let score = env.stream(source)
     
             .map(move |mut x| {
                 let dim = x.0.len();   
-                let mut y = vec![0;self.num_classes];
+                let mut y = vec![0;num_classes];
                 let class = x.0[dim-1] as usize; //class number  
                 y[class] = 1; //one hot encoding before normalization because it's a classification task
                 //scale the features
-                if self.normalization==true{
-                    x.0 = x.0.iter().zip(self.train_mean.iter().zip(self.train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
+                if normalization==true{
+                    x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
                     }               
                 x.0[dim-1] = 1.;   
-                let mut prediction = vec![0.;self.num_classes];
-                for i in 0..self.num_classes{
-                    let y_hat:f64 = x.0.iter().zip(self.coefficients[i].iter()).map(|(xi, wi)| xi * wi).sum();
+                let mut prediction = vec![0.;num_classes];
+                for i in 0..num_classes{
+                    let y_hat:f64 = x.0.iter().zip(coefficients[i].iter()).map(|(xi, wi)| xi * wi).sum();
                     prediction[i] = sigmoid(y_hat);
                 }
                 let mut argmax = 0;
@@ -139,12 +138,18 @@ impl LogisticRegression {
   
 //predict doesn't take as input the target, so a dataset with row of length num_features
 impl LogisticRegression {
-    fn predict(self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<usize>{
+    fn predict(&self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<usize>{
 
         if self.fitted != true {panic!("Can't compute predictions before fitting the model!");}
         let source = CsvSource::<Sample>::new(path_to_data).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();       
+
+        let normalization = self.normalization;
+        let train_mean = self.train_mean.clone();
+        let train_std = self.train_std.clone();
+        let coefficients = self.coefficients.clone();
+        let num_classes = self.num_classes.clone();
 
         let prediction = env.stream(source)
     
@@ -152,11 +157,11 @@ impl LogisticRegression {
                 let mut highest_prob = 0.;
                 let mut predicted_class:usize = 0;
                 x.0.push(1.); //push the intercept
-                if self.normalization==true{
-                        x.0 = x.0.iter().zip(self.train_mean.iter().zip(self.train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
+                if normalization==true{
+                        x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
                         }  
-                for i in 0..self.num_classes {
-                    let pred = x.0.iter().zip(self.coefficients[i].iter()).map(|(xi,wi)| xi*wi).sum();
+                for i in 0..num_classes {
+                    let pred = x.0.iter().zip(coefficients[i].iter()).map(|(xi,wi)| xi*wi).sum();
                     if highest_prob > pred{
                         predicted_class = i;
                         highest_prob = pred;
@@ -193,17 +198,17 @@ fn main() {
     let method = "SGD".to_string(); //"ADAM".to_string()
     let num_iters = 100;
     let learn_rate = 1e-2;
-    let batch_size = 100;
+    let data_fraction = 0.1;
     let normalize = true;
     let weight_decay = false;
 
     //return the trained model
-    model = model.fit(&training_set, method, num_iters, learn_rate, batch_size, normalize, weight_decay, &config);
+    model.fit(&training_set, method, num_iters, learn_rate, data_fraction, normalize, weight_decay, &config);
 
     //compute the score over the training set
-    let score = model.clone().score(&training_set, &config);
+    let score = model.score(&training_set, &config);
 
-    let predictions = model.clone().predict(&data_to_predict, &config);
+    let predictions = model.predict(&data_to_predict, &config);
 
     let elapsed = start.elapsed();
 

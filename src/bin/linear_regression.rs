@@ -42,9 +42,9 @@ impl LinearRegression {
 
 //train the model with sgd or adam
 impl LinearRegression {
-    fn fit(mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, 
-        batch_size: usize, normalize: bool, weight_decay: bool, config: &EnvironmentConfig)
-    -> LinearRegression{
+    fn fit(&mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, 
+        data_fraction: f64, normalize: bool, weight_decay: bool, config: &EnvironmentConfig)
+        {
             
         self.fitted = true;
         //to normalize the samples we need their mean and std
@@ -59,33 +59,27 @@ impl LinearRegression {
 
             "ADAM" | "adam"  =>
             {    
-            let state = linear_adam(weight_decay, learn_rate, batch_size, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
             weights = state.weights;
             },
 
             "SGD" | "sgd" | _ => 
             {
-            let state = linear_sgd(weight_decay, learn_rate, batch_size, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = linear_sgd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
             weights = state.weights;
             }
         }    
+        self.coefficients = weights.clone();
+        self.features_coef = weights.iter().take(weights.len()-1).cloned().collect::<Vec::<f64>>();
+        self.intercept = weights[weights.len()-1];
 
-        LinearRegression {
-            coefficients: weights.clone(),
-            features_coef: weights.iter().take(weights.len()-1).cloned().collect::<Vec::<f64>>(),
-            intercept: weights[weights.len()-1],
-            normalization: self.normalization,
-            train_mean: self.train_mean,
-            train_std: self.train_std,
-            fitted: self.fitted,
-        } 
     }
 }
 
 
 
 impl LinearRegression {
-    fn fit_ols(mut self, path_to_data: &String, normalize: bool, config: &EnvironmentConfig)->LinearRegression{
+    fn fit_ols(&mut self, path_to_data: &String, normalize: bool, config: &EnvironmentConfig){
             
             self.fitted = true;
             //to normalize the samples we need their mean and std
@@ -96,15 +90,9 @@ impl LinearRegression {
 
             let weights = ols_training(path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
 
-            LinearRegression {
-                coefficients: weights.clone(),
-                features_coef: weights.iter().take(weights.len()-1).cloned().collect::<Vec::<f64>>(),
-                intercept: weights[weights.len()-1],
-                normalization: self.normalization,
-                train_mean: self.train_mean,
-                train_std: self.train_std,
-                fitted: self.fitted,
-            } 
+            self.coefficients = weights.clone();
+            self.features_coef = weights.iter().take(weights.len()-1).cloned().collect::<Vec::<f64>>();
+            self.intercept = weights[weights.len()-1];
     }
 }
     
@@ -113,7 +101,7 @@ impl LinearRegression {
 //score takes as input also the target, a dataset with row of length num_features+1
 //can be used for evaluating both training and test set
 impl LinearRegression {
-    fn score(self, path_to_data: &String, config: &EnvironmentConfig) -> f64{
+    fn score(&self, path_to_data: &String, config: &EnvironmentConfig) -> f64{
 
         if self.fitted != true {panic!("Can't compute score before fitting the model!");}
         let mut avg_y = 0.;
@@ -131,21 +119,25 @@ impl LinearRegression {
 
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
-    
+        
+        let normalization = self.normalization;
+        let train_mean = self.train_mean.clone();
+        let train_std = self.train_std.clone();
+        let coefficients = self.coefficients.clone();
         //compute the residuals sums for the R2
         let score = env.stream(source)
                 
                 .map(move |mut x| {
                 let mut mean_y = avg_y;
                 //scale the features and the target   
-                if self.normalization==true{
-                    x.0 = x.0.iter().zip(self.train_mean.iter().zip(self.train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
+                if normalization==true{
+                    x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
                     mean_y = 0.; 
                 }
                 let dim = x.0.len();                     
                 let y = x.0[dim-1];
                 x.0[dim-1] = 1.;   
-                let pred: f64 = x.0.iter().zip(self.coefficients.iter()).map(|(xi,wi)| xi*wi).sum();
+                let pred: f64 = x.0.iter().zip(coefficients.iter()).map(|(xi,wi)| xi*wi).sum();
                 [(y-pred).powi(2),(y-mean_y).powi(2)]           
             })
     
@@ -168,32 +160,37 @@ impl LinearRegression {
 
 //predict doesn't take as input the target, but a new dataset with rows of length num_features
 impl LinearRegression {
-    fn predict(self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<f64>{
+    fn predict(&self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<f64>{
 
         if self.fitted != true {panic!("Can't compute predictions before fitting the model!");}
         let source = CsvSource::<Sample>::new(path_to_data).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         
+        let normalization = self.normalization;
+        let train_mean = self.train_mean.clone();
+        let train_std = self.train_std.clone();
+        let coefficients = self.coefficients.clone();
+
         let predictions = env.stream(source)    
             .map(move |mut x| {
                 let pred:f64;
                 let dim = x.0.len();
-                if dim==self.features_coef.len(){
+                if dim==coefficients.len()-1{
                     x.0.push(1.); //push the intercept
                 }
                 else{
                     x.0[dim-1] = 1.;//when the dataset has the target as last column like in the test set
                 }
                 
-                if self.normalization==true{
-                    x.0 = x.0.iter().zip(self.train_mean.iter().zip(self.train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
-                    let y_mean = self.train_mean[self.train_mean.len()-1];
-                    let y_std = self.train_std[self.train_mean.len()-1];
-                    pred = x.0.iter().zip(self.coefficients.iter()).map(|(xi,wi)| xi*wi).sum::<f64>() * y_std + y_mean;
+                if normalization==true{
+                    x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
+                    let y_mean = train_mean[train_mean.len()-1];
+                    let y_std = train_std[train_mean.len()-1];
+                    pred = x.0.iter().zip(coefficients.iter()).map(|(xi,wi)| xi*wi).sum::<f64>() * y_std + y_mean;
                 }   
                 else{                  
-                pred = x.0.iter().zip(self.coefficients.iter()).map(|(xi,wi)| xi*wi).sum();
+                pred = x.0.iter().zip(coefficients.iter()).map(|(xi,wi)| xi*wi).sum();
                 }
                 pred           
             })
@@ -211,34 +208,34 @@ fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
     let training_set = "forest_fire.csv".to_string();
     let data_to_predict = "forest_fire.csv".to_string();
-
+ 
     let mut model = LinearRegression::new();
     
     //hyper_parameters for the iterative method model.fit
     let method = "SGD".to_string(); //"ADAM".to_string()
-    let num_iters = 30;
+    let num_iters = 100;
     let learn_rate = 1e-1;
-    let batch_size = 1000;
+    let data_fraction = 0.001;
     let weight_decay = false;
 
     let normalize = true;
 
     let start = Instant::now();
     //return the trained model
-    //model = model.fit(&training_set, method, num_iters, learn_rate, batch_size, normalize, weight_decay, &config);
+    //model.fit(&training_set, method, num_iters, learn_rate, data_fraction, normalize, weight_decay, &config);
 
     //fitting with ols
-    model = model.fit_ols(&training_set, false, &config);
+    model.fit_ols(&training_set, false, &config);
 
     let elapsed = start.elapsed();
 
     let start_score = Instant::now();
     //compute the score over the training set
-    let r2 = model.clone().score(&training_set, &config);
+    let r2 = model.score(&training_set, &config);
     let elapsed_score = start_score.elapsed();
     
     let start_pred = Instant::now();
-    let predictions = model.clone().predict(&data_to_predict, &config);
+    let predictions = model.predict(&data_to_predict, &config);
     let elapsed_pred = start_pred.elapsed();
     
 
