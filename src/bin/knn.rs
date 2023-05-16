@@ -51,19 +51,25 @@ impl KNeighborsClassifier {
         for p in &self.data{
             let dist = euclidean_distance(point, &p.coords);
             if map.len()<k {
-                map.insert(dist, p.class.to_string());
+                let arr: Vec<String> = vec![p.class.to_string()];
+                map.insert(dist, arr);
             }
             else{
                 if let Some(max)=&map.clone().last_entry(){
                     let val = *max.key();
                     if dist<val{
                         map.remove(&val);
-                        map.insert(dist, p.class.to_string());
+                        let mut arr: Vec<String> = Vec::new();
+                        if let Some(mut curr) = map.get(&dist) {
+                            arr.extend(curr.to_vec());
+                        }
+                        arr.push(p.class.to_string());
+                        map.insert(dist, arr);
                     }
                 }    
             }
         }
-        map.values().cloned().collect()
+        map.values().cloned().into_iter().flatten().collect()
     }
 }
 
@@ -86,7 +92,12 @@ fn main() {
     //parallel read CSV train file
     let train_set = env.stream(source)
     .collect_vec();
+
+    let start = Instant::now();
     env.execute();
+    let elapsed = start.elapsed();
+    eprintln!("Training time: {elapsed:?}"); 
+
 
     //use input points to create model
     let mut model = KNeighborsClassifier::new();
@@ -106,13 +117,20 @@ fn main() {
         move |x| {
             let nearest = model.k_nearest(&x.coords, k);
             let mut map: HashMap<String, usize> = HashMap::new();
+            let mut res = 0;
             for x in nearest {
                 *map.entry(x).or_default() += 1;
             }
-            let max = map.into_iter().max_by_key(|(_, v)| *v).map(|(k, _)| k);
-            (x.class,max)
+            if let Some(max) = map.into_iter().max_by_key(|(_, v)| *v).map(|(k, _)| k){
+                if x.class == max {
+                    res = 1;
+                }
+            }
+            res 
         }
     )
+    .group_by_avg(|&_k| true, |&n| n as f64)
+    .drop_key()
     .collect_vec();
 
     let start = Instant::now();
@@ -121,8 +139,8 @@ fn main() {
 
     //print results
     if let Some(result) = predict_set.get(){
-        eprintln!{"{:#?}",result}
+        eprintln!{"Score: {:?}",result[0]}
     }
-    eprintln!("Elapsed: {elapsed:?}"); 
+    eprintln!("Test time: {elapsed:?}"); 
 
 }
