@@ -26,18 +26,27 @@ enum Node {
         id: usize,
         feature: Vec<f64>,
         target: usize,
-    }
+    },
+    Void{}
 }
 
 
 fn train_decision_tree(data: &[Vec<f64>], targets: &[usize]) -> DecisionTree {
+    if targets.is_empty(){
+        DecisionTree { root: Some(Node::Void {}) } 
+    }
+    else{
     let feature_count = data[0].len();
     let mut feature_indices: Vec<usize> = (0..feature_count).collect();
     let root = build_tree(data, targets, &mut feature_indices);
-    DecisionTree { root: Some(root) }
+    DecisionTree { root: Some(root) }}
 }
 
 fn build_tree(data: &[Vec<f64>], targets: &[usize], feature_indices: &mut Vec<usize>) -> Node {
+    if targets.is_empty(){
+        Node::Void {}
+    }
+    else{
     let class_counts = count_class_occurrences(targets);
     let majority_class = get_majority_class(&class_counts);
 
@@ -86,7 +95,7 @@ fn build_tree(data: &[Vec<f64>], targets: &[usize], feature_indices: &mut Vec<us
             left,
             right,
         }
-    }
+    }}
 }
 
 fn count_class_occurrences(targets: &[usize]) -> HashMap<usize, usize> {
@@ -250,11 +259,10 @@ impl RandomForest {fn new(num_classes: usize) -> RandomForest{
 
 //train the model with sgd or adam
 impl RandomForest {
-    fn fit(&mut self, path_to_data: &String, num_tree:usize, max_samples: usize, config: &EnvironmentConfig)
+    fn fit(&mut self, path_to_data: &String, num_tree:usize, config: &EnvironmentConfig)
         {
 
         self.fitted = true;
-        let num_classes = self.num_classes;
         
         let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
@@ -286,10 +294,11 @@ impl RandomForest {
         //     }})
         // //.drop_key()
         .map(move |mut x| {
-            let tree_id = rand::thread_rng().gen_range(1..=num_tree);
+            let tree_id = rand::thread_rng().gen_range(1..=num_tree+1);
             let y = x.pop().unwrap() as usize;
             DecisionTree{root: Some(Node::Forward { id: tree_id, feature: x, target: y})}
         })
+        .shuffle()
         .replay(
             2,
             StateRF::new(),
@@ -300,7 +309,7 @@ impl RandomForest {
                     //for each tree a matrix with data and vec with targets
                     let mut local_trees_data: HashMap<usize, (Vec<Vec<f64>>, Vec<usize>)> = HashMap::new();
                     //count the amount of data pushed for each tree
-                    let mut data_count_per_tree: Vec<usize> = vec![0;num_tree];
+                    //let mut data_count_per_tree: Vec<usize> = vec![0;num_tree];
                     let mut flag_result = 0;
                     move | x|{
                         if state.get().iter == 1 && flag_result<num_tree{
@@ -324,11 +333,22 @@ impl RandomForest {
                                 }
                                 Node::Leaf { class_label } => {
                                     
-                                }};
+                                }
+                                Node::Void {  } =>{}
+                                };
 
-                            data_count_per_tree[class]+=1;
-                            local_trees_data.entry(class).or_insert((Vec::new(),Vec::new())).0.push(features);
-                            local_trees_data.entry(class).or_insert((Vec::new(),Vec::new())).1.push(class);
+                            //data_count_per_tree[id_tree]+=1;
+                            local_trees_data.entry(id_tree).or_insert((Vec::new(),Vec::new())).0.push(features.clone());
+                            local_trees_data.entry(id_tree).or_insert((Vec::new(),Vec::new())).1.push(class);
+                            
+                            //extra sample with probability of 50% for each tree
+                            for i in 1..num_tree+1{
+                                if i!=id_tree && rand::thread_rng().gen::<f64>() > 0.5{
+                                   // data_count_per_tree[i]+=1;
+                                    local_trees_data.entry(i).or_insert((Vec::new(),Vec::new())).0.push(features.clone());
+                                    local_trees_data.entry(i).or_insert((Vec::new(),Vec::new())).1.push(class);
+                                }
+                            }
                             None
                 }
                 else{
@@ -389,11 +409,10 @@ fn main() {
     let num_classes = 2;
     let mut model = RandomForest::new(num_classes);
     
-    let num_tree = 10;
-    let max_samples = 100;
+    let num_tree = 2;
 
     
-    model.fit(&training_set, num_tree, max_samples, &config);
+    model.fit(&training_set, num_tree, &config);
 
     // //compute the score over the training set
     // let score = model.score(&training_set, &config);
