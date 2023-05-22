@@ -226,6 +226,22 @@ fn calculate_gini_impurity(class_counts: Vec<usize>) -> f64 {
 }
 
 
+fn predict_sample(sample: &[f64], node: Node) -> usize {
+    match node {
+        Node::Split { feature_index, split_value, left, right } => {
+            let sample_value = sample[feature_index];
+
+            if sample_value <= split_value {
+                predict_sample(sample, *left)
+            } else {
+                predict_sample(sample, *right)
+            }
+        }
+        Node::Leaf { class_label } => class_label,
+        Node::Forward { id, feature, target } => 0,
+        Node::Void {  } => 0,
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct StateRF {
@@ -259,7 +275,7 @@ impl RandomForest {fn new(num_classes: usize) -> RandomForest{
 
 //train the model with sgd or adam
 impl RandomForest {
-    fn fit(&mut self, path_to_data: &String, num_tree:usize, config: &EnvironmentConfig)
+    fn fit(&mut self, path_to_data: &String, num_tree:usize, data_fraction: f64, config: &EnvironmentConfig)
         {
 
         self.fitted = true;
@@ -343,7 +359,7 @@ impl RandomForest {
                             
                             //extra sample with probability of 50% for each tree
                             for i in 1..num_tree+1{
-                                if i!=id_tree && rand::thread_rng().gen::<f64>() > 0.5{
+                                if i!=id_tree && rand::thread_rng().gen::<f64>() > (1.-data_fraction){
                                    // data_count_per_tree[i]+=1;
                                     local_trees_data.entry(i).or_insert((Vec::new(),Vec::new())).0.push(features.clone());
                                     local_trees_data.entry(i).or_insert((Vec::new(),Vec::new())).1.push(class);
@@ -386,8 +402,73 @@ impl RandomForest {
     let state = fit.get().unwrap()[0].clone();
     self.forest = state.forest;   
     }
-         
+
+
+    fn score(&self, path_to_data: &String, config: &EnvironmentConfig) -> f64{
+
+        if self.fitted != true {panic!("Can't compute score before fitting the model!");}
+        let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
+        let mut env = StreamEnvironment::new(config.clone());
+        env.spawn_remote_workers();
+        
+        let forest = self.forest.clone();
+
+        let predictions = env.stream(source)
+    
+            .map(move |mut x| {
+                let y = x.pop().unwrap();
+                let mut class_pred_count: HashMap<usize, usize> = HashMap::new();
+                for tree in forest.clone(){
+                    let pred = predict_sample(&x,tree.root.unwrap());
+                    *class_pred_count.entry(pred).or_insert(0) += 1;
+                }
+                let pred = get_majority_class(&class_pred_count) as f64;
+                if y == pred{
+                    return 1.;
+                }
+                else{
+                    return 0.;
+                }
+            })
+            .group_by_avg(|&_k| true, |&v| v).drop_key()   
+            .collect_vec();
+        
+        env.execute();
+            
+        let result = predictions.get().unwrap()[0];
+        result
     }
+
+
+    fn predict(&self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<f64>{
+
+        if self.fitted != true {panic!("Can't compute score before fitting the model!");}
+        let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
+        let mut env = StreamEnvironment::new(config.clone());
+        env.spawn_remote_workers();
+        
+        let forest = self.forest.clone();
+
+        let predictions = env.stream(source)
+    
+            .map(move |x| {
+                let mut class_pred_count: HashMap<usize, usize> = HashMap::new();
+                for tree in forest.clone(){
+                    let pred = predict_sample(&x,tree.root.unwrap());
+                    *class_pred_count.entry(pred).or_insert(0) += 1;
+                }
+                get_majority_class(&class_pred_count) as f64
+            })    
+            .collect_vec();
+        
+        env.execute();
+            
+        let result = predictions.get().unwrap();
+        result
+    }
+
+    
+}
    
 
 
@@ -409,13 +490,14 @@ fn main() {
     let num_classes = 2;
     let mut model = RandomForest::new(num_classes);
     
-    let num_tree = 2;
+    let num_tree = 10;
+    let data_fraction = 0.3;
 
     
-    model.fit(&training_set, num_tree, &config);
+    model.fit(&training_set, num_tree, data_fraction, &config);
 
-    // //compute the score over the training set
-    // let score = model.score(&training_set, &config);
+    //compute the score over the training set
+    let score = model.score(&training_set, &config);
 
     // let predictions = model.predict(&data_to_predict, &config);
 
@@ -424,9 +506,9 @@ fn main() {
     // //print!("\nCoefficients: {:?}\n", model.features_coef);
     // //print!("Intercept: {:?}\n", model.intercept);  
 
-    // print!("\nScore: {:?}\n", score);
+    print!("\nScore: {:?}\n", score);
     // print!("\nPredictions: {:?}\n", predictions.iter().take(25).cloned().collect::<Vec<usize>>());
     eprintln!("\nElapsed: {elapsed:?}");
-    eprintln!("{:#?}",model.forest);
+    //eprintln!("{:#?}",model.forest);
 
 }
