@@ -132,35 +132,35 @@ fn get_majority_class(class_counts: &HashMap<usize, usize>) -> usize {
 }
 
 
-fn find_best_split_expensive(
-    data: &[Vec<f64>],
-    targets: &[usize],
-    feature_indices: &[usize],
-) -> (usize, f64) {
-    let mut best_feature_index = 0;
-    let mut best_split_value = 0.0;
-    let mut best_gini_index = f64::MAX;
+// fn find_best_split_expensive(
+//     data: &[Vec<f64>],
+//     targets: &[usize],
+//     feature_indices: &[usize],
+// ) -> (usize, f64) {
+//     let mut best_feature_index = 0;
+//     let mut best_split_value = 0.0;
+//     let mut best_gini_index = f64::MAX;
 
-    for &feature_index in feature_indices {
-        let mut feature_values: Vec<f64> = data.iter().map(|sample| sample[feature_index]).collect();
-        feature_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+//     for &feature_index in feature_indices {
+//         let mut feature_values: Vec<f64> = data.iter().map(|sample| sample[feature_index]).collect();
+//         feature_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        for i in 0..feature_values.len() - 1 {
-            let split_value = (feature_values[i] + feature_values[i + 1]) / 2.0;
+//         for i in 0..feature_values.len() - 1 {
+//             let split_value = (feature_values[i] + feature_values[i + 1]) / 2.0;
 
-            let (left_counts, right_counts) = count_class_occurrences_split(targets, &data, feature_index, split_value);
+//             let (left_counts, right_counts) = count_class_occurrences_split(targets, &data, feature_index, split_value);
 
-            let gini_index = calculate_gini_index(&left_counts, &right_counts);
-            if gini_index < best_gini_index {
-                best_gini_index = gini_index;
-                best_feature_index = feature_index;
-                best_split_value = split_value;
-            }
-        }
-    }
+//             let gini_index = calculate_gini_index(&left_counts, &right_counts);
+//             if gini_index < best_gini_index {
+//                 best_gini_index = gini_index;
+//                 best_feature_index = feature_index;
+//                 best_split_value = split_value;
+//             }
+//         }
+//     }
 
-    (best_feature_index, best_split_value)
-}
+//     (best_feature_index, best_split_value)
+// }
 
 
 fn split_median(data: &[Vec<f64>], targets: &[usize], feature_indices: &[usize]) -> (usize, f64) {
@@ -255,7 +255,7 @@ fn predict_sample(sample: &[f64], node: Node) -> usize {
             }
         }
         Node::Leaf { class_label } => class_label,
-        Node::Forward { id, feature, target } => 0,
+        Node::Forward { id: _, feature: _, target: _ } => 0,
         Node::Void {  } => 0,
     }
 }
@@ -290,7 +290,7 @@ impl RandomForest {fn new() -> RandomForest{
 
 //train the model with sgd or adam
 impl RandomForest {
-    fn fit(&mut self, path_to_data: &String, num_tree:usize, mut min_features: usize, mut max_features: usize, data_fraction: f64, config: &EnvironmentConfig)
+    fn fit(&mut self, path_to_data: &String, num_tree:usize, min_features: usize, max_features: usize, data_fraction: f64, config: &EnvironmentConfig)
         {
 
         self.fitted = true;
@@ -478,9 +478,9 @@ fn main() {
 
     let mut model = RandomForest::new();
     
-    let num_tree = 1;
-    let min_features = 11;
-    let max_features = 11;
+    let num_tree = 10;
+    let min_features = 4;
+    let max_features = 8;
     let data_fraction = 0.5;
 
     
