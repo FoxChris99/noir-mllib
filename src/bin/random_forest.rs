@@ -2,6 +2,7 @@ use noir::prelude::*;
 use std::{time::Instant, collections::HashMap};
 use serde::{Deserialize, Serialize};
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -13,15 +14,19 @@ struct DecisionTree {
 
 #[derive(Clone, Serialize, Debug, Deserialize)]
 enum Node {
+    //a node where a feature is splitted
     Split {
         feature_index: usize,
         split_value: f64,
         left: Box<Node>,
         right: Box<Node>,
     },
+    //leaf node with the label of the majority class
     Leaf {
         class_label: usize,
     },
+    //a node just to forward the information of each sample,
+    //to be then used in the replay
     Forward{
         id: usize,
         feature: Vec<f64>,
@@ -31,15 +36,26 @@ enum Node {
 }
 
 
-fn train_decision_tree(data: &[Vec<f64>], targets: &[usize]) -> DecisionTree {
+fn train_decision_tree(data: &[Vec<f64>], targets: &[usize], mut min_features: usize, mut max_features: usize) -> DecisionTree {
     if targets.is_empty(){
         DecisionTree { root: Some(Node::Void {}) } 
     }
     else{
-    let feature_count = data[0].len();
-    let mut feature_indices: Vec<usize> = (0..feature_count).collect();
-    let root = build_tree(data, targets, &mut feature_indices);
-    DecisionTree { root: Some(root) }}
+        let feature_count = data[0].len();
+        let mut rng = rand::thread_rng();
+        let range = (0..=feature_count-1).collect::<Vec<_>>(); 
+        if max_features<feature_count{
+            max_features = feature_count;
+        }
+        if min_features > max_features{
+            min_features = max_features;
+        }  
+        let mut feature_indices: Vec<usize> = range
+        .choose_multiple(&mut rng, rand::thread_rng().gen_range(min_features..max_features+1))
+        .cloned()
+        .collect();
+        let root = build_tree(data, targets, &mut feature_indices);
+        DecisionTree { root: Some(root) }}
 }
 
 fn build_tree(data: &[Vec<f64>], targets: &[usize], feature_indices: &mut Vec<usize>) -> Node {
@@ -63,6 +79,7 @@ fn build_tree(data: &[Vec<f64>], targets: &[usize], feature_indices: &mut Vec<us
     } else {
         let (best_feature_index, best_split_value) =
         split_median(data, targets, feature_indices);
+        //find_best_split_expensive(data, targets, feature_indices);
 
         let mut left_data: Vec<Vec<f64>> = Vec::new();
         let mut left_targets: Vec<usize> = Vec::new();
@@ -262,76 +279,50 @@ impl StateRF {
 struct RandomForest {
     forest: Vec<DecisionTree>,
     fitted: bool,
-    num_classes: usize
 }
 
-impl RandomForest {fn new(num_classes: usize) -> RandomForest{ 
+impl RandomForest {fn new() -> RandomForest{ 
     RandomForest{ 
                 forest:  Vec::<DecisionTree>::new(), 
                 fitted: false,
-                num_classes: num_classes
                 }
     }}
 
 //train the model with sgd or adam
 impl RandomForest {
-    fn fit(&mut self, path_to_data: &String, num_tree:usize, data_fraction: f64, config: &EnvironmentConfig)
+    fn fit(&mut self, path_to_data: &String, num_tree:usize, mut min_features: usize, mut max_features: usize, data_fraction: f64, config: &EnvironmentConfig)
         {
 
         self.fitted = true;
         
-        let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+        let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
-        let fit = env.stream(source.clone())
-        //.group_by(move |_| rand::thread_rng().gen_range(1..=1))
-        // .rich_filter_map({
-        //     //for each tree a matrix with data and vec with targets
-        //     let mut local_trees_data: HashMap<usize, (Vec<Vec<f64>>, Vec<usize>)> = HashMap::new();
-        //     //count the amount of data pushed for each tree
-        //     let mut data_count_per_tree: Vec<usize> = Vec::new();
-        //     let mut flag_result = 0;
-        //     move |mut x|{
-        //         for (i, count) in data_count_per_tree.iter().enumerate(){
-        //             if *count>= max_samples{
-        //                 flag_result = i;
-        //                 let tree = train_decision_tree(&data, &targets);
-        //                 Some(tree)
-        //             }
-        //         }                
-        //         else{
-        //             count+=1;
-        //             let y = x.pop().unwrap() as usize;
-        //             let tree_id = rand::thread_rng().gen_range(1..=num_tree);
-        //             local_trees_data.entry(tree_id).or_insert((Vec::new(),Vec::new())).0.push(x);
-        //             local_trees_data.entry(tree_id).or_insert((Vec::new(),Vec::new())).1.push(y);
-        //             None
-        //         }
-        //     }})
-        // //.drop_key()
+        let fit = env.stream(source)
         .map(move |mut x| {
-            let tree_id = rand::thread_rng().gen_range(1..=num_tree+1);
+            //id of the tree which will get for sure the sample
+            let tree_id = rand::thread_rng().gen_range(0..=num_tree-1);
+            //target class
             let y = x.pop().unwrap() as usize;
+            //the structure forwarded is a DecisionTree because we need it to be streamed in the replay
             DecisionTree{root: Some(Node::Forward { id: tree_id, feature: x, target: y})}
         })
         .shuffle()
         .replay(
             2,
             StateRF::new(),
-
             move |s, state| 
             {
                 s.rich_filter_map({
-                    //for each tree a matrix with data and vec with targets
+                    //for each tree a "matrix" with data and vec with targets
                     let mut local_trees_data: HashMap<usize, (Vec<Vec<f64>>, Vec<usize>)> = HashMap::new();
-                    //count the amount of data pushed for each tree
-                    //let mut data_count_per_tree: Vec<usize> = vec![0;num_tree];
                     let mut flag_result = 0;
                     move | x|{
                         if state.get().iter == 1 && flag_result<num_tree{
-                            flag_result+=1;
+                         
                             let tree = train_decision_tree(&local_trees_data.get(&flag_result).unwrap().0,
-                                                                 &local_trees_data.get(&flag_result).unwrap().1);
+                                                                 &local_trees_data.get(&flag_result).unwrap().1, min_features, max_features);
+                            flag_result+=1;
                             Some(tree)
                         }
                         else if state.get().iter==0{
@@ -339,28 +330,25 @@ impl RandomForest {
                             let mut id_tree = 0;
                             let mut class = 0;
                             match x.root.unwrap() {
+                                //get the sample information
                                 Node::Forward { id, feature, target } => {
                                     features = feature;
                                     id_tree = id;
                                     class = target;
                                 }
-                                Node::Split { feature_index, split_value, left, right } => {
-                                    
-                                }
-                                Node::Leaf { class_label } => {
-                                    
-                                }
-                                Node::Void {  } =>{}
-                                };
-
-                            //data_count_per_tree[id_tree]+=1;
+                                //no node will be one of the following
+                                Node::Split { feature_index: _, split_value: _, left: _, right: _ } => {}
+                                Node::Leaf { class_label: _ } => {}
+                                Node::Void {} =>{}
+                            };
+                            
+                            //add to the corresponding tree id the features and the class of the sample
                             local_trees_data.entry(id_tree).or_insert((Vec::new(),Vec::new())).0.push(features.clone());
                             local_trees_data.entry(id_tree).or_insert((Vec::new(),Vec::new())).1.push(class);
                             
-                            //extra sample with probability of 50% for each tree
-                            for i in 1..num_tree+1{
+                            //for each tree probability of data_fraction% to use the sample for training
+                            for i in 0..num_tree{
                                 if i!=id_tree && rand::thread_rng().gen::<f64>() > (1.-data_fraction){
-                                   // data_count_per_tree[i]+=1;
                                     local_trees_data.entry(i).or_insert((Vec::new(),Vec::new())).0.push(features.clone());
                                     local_trees_data.entry(i).or_insert((Vec::new(),Vec::new())).1.push(class);
                                 }
@@ -482,19 +470,21 @@ impl RandomForest {
 fn main() { 
     let (config, _args) = EnvironmentConfig::from_args();
 
-    let training_set = "wine_quality.csv".to_string();
+    //let training_set = "wine_quality.csv".to_string();
+    let training_set = "wine_color.csv".to_string();
     let data_to_predict = "wine_color.csv".to_string();
 
     let start = Instant::now();
 
-    let num_classes = 2;
-    let mut model = RandomForest::new(num_classes);
+    let mut model = RandomForest::new();
     
-    let num_tree = 10;
+    let num_tree = 1;
+    let min_features = 11;
+    let max_features = 11;
     let data_fraction = 0.5;
 
     
-    model.fit(&training_set, num_tree, data_fraction, &config);
+    model.fit(&training_set, num_tree, min_features, max_features, data_fraction, &config);
 
     //compute the score over the training set
     let score = model.score(&training_set, &config);
@@ -509,6 +499,6 @@ fn main() {
     print!("\nScore: {:?}\n", score);
     print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<usize>>());
     eprintln!("\nElapsed: {elapsed:?}");
-    //eprintln!("{:#?}",model.forest);
+    eprintln!("{:#?}",model.forest);
 
 }
