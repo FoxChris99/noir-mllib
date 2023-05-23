@@ -440,7 +440,7 @@ impl RandomForest {
     }
 
 
-    fn predict(&self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<f64>{
+    fn predict(&self, path_to_data: &String, config: &EnvironmentConfig) -> Vec<usize>{
 
         if self.fitted != true {panic!("Can't compute score before fitting the model!");}
         let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
@@ -457,7 +457,7 @@ impl RandomForest {
                     let pred = predict_sample(&x,tree.root.unwrap());
                     *class_pred_count.entry(pred).or_insert(0) += 1;
                 }
-                get_majority_class(&class_pred_count) as f64
+                get_majority_class(&class_pred_count)
             })    
             .collect_vec();
         
@@ -482,7 +482,7 @@ impl RandomForest {
 fn main() { 
     let (config, _args) = EnvironmentConfig::from_args();
 
-    let training_set = "wine_color.csv".to_string();
+    let training_set = "wine_quality.csv".to_string();
     let data_to_predict = "wine_color.csv".to_string();
 
     let start = Instant::now();
@@ -491,7 +491,7 @@ fn main() {
     let mut model = RandomForest::new(num_classes);
     
     let num_tree = 10;
-    let data_fraction = 0.3;
+    let data_fraction = 0.5;
 
     
     model.fit(&training_set, num_tree, data_fraction, &config);
@@ -499,7 +499,7 @@ fn main() {
     //compute the score over the training set
     let score = model.score(&training_set, &config);
 
-    // let predictions = model.predict(&data_to_predict, &config);
+    let predictions = model.predict(&data_to_predict, &config);
 
     let elapsed = start.elapsed();
 
@@ -507,7 +507,7 @@ fn main() {
     // //print!("Intercept: {:?}\n", model.intercept);  
 
     print!("\nScore: {:?}\n", score);
-    // print!("\nPredictions: {:?}\n", predictions.iter().take(25).cloned().collect::<Vec<usize>>());
+    print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<usize>>());
     eprintln!("\nElapsed: {elapsed:?}");
     //eprintln!("{:#?}",model.forest);
 
