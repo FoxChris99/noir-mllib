@@ -24,7 +24,7 @@ pub fn ols_training(path_to_data: &String, normalization: bool, train_mean: Vec<
 
             move |s, state| 
             {
-                s.shuffle()
+                s
                 .rich_filter_map({
                     let mut local_matrix: Vec<Vec<f64>> = Vec::new();
                     //let mut local_matrix: Vec<f64> = Vec::new();

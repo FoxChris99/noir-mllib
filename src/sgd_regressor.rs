@@ -43,7 +43,7 @@ pub fn linear_sgd(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_i
             move |s, state| 
             {
                 //shuffle the samples
-                s.shuffle()
+                s
                 //each replica filter a number of samples equal to batch size and
                 //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
                 .rich_filter_map(
@@ -163,7 +163,7 @@ pub fn logistic_sgd(num_classes: usize, weight_decay: bool, learn_rate: f64, dat
         move |s, state| 
         {
             //shuffle the samples
-            s.shuffle()
+            s
             //each replica filter a number of samples equal to batch size and
             //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
             .rich_filter_map({
@@ -199,12 +199,13 @@ pub fn logistic_sgd(num_classes: usize, weight_decay: bool, learn_rate: f64, dat
                         }
                     else {None}}})
             //the average of the gradients is computed and forwarded as a single value
-            .group_by_avg(|_x| true, |x| x.clone()).drop_key().max_parallelism(1)
+            .group_by_avg(|_x| true, |x| x.clone()).drop_key()//.max_parallelism(1)
         },
 
         move |local_grad: &mut Sample, avg_grad| 
         {   
-            *local_grad = avg_grad;
+            if avg_grad.0.len()!=0{
+                *local_grad = avg_grad;}
         },
 
         move |state, local_grad| 
@@ -253,8 +254,6 @@ pub fn logistic_sgd(num_classes: usize, weight_decay: bool, learn_rate: f64, dat
     let state = fit.get().unwrap()[0].clone();
     state
 }
-
-
 
 
 
