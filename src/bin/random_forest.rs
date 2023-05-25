@@ -102,8 +102,8 @@ fn build_tree(data: &[Vec<f64>], targets: &[usize], feature_indices: &mut Vec<us
         feature_indices.retain(|&x| x != best_feature_index);
 
         // Recursively build the left and right subtrees
-        let left = Box::new(build_tree(&left_data, &left_targets, feature_indices));
-        let right = Box::new(build_tree(&right_data, &right_targets, feature_indices));
+        let left = Box::new(build_tree(&left_data, &left_targets, &mut feature_indices.to_vec()));
+        let right = Box::new(build_tree(&right_data, &right_targets, &mut feature_indices.to_vec()));
 
         // Create a split node
         Node::Split {
@@ -295,7 +295,7 @@ impl RandomForest {
 
         self.fitted = true;
         
-        let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(true).delimiter(b',');
+        let source = CsvSource::<Vec<f64>>::new(path_to_data).has_headers(false).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         let fit = env.stream(source)
@@ -499,6 +499,6 @@ fn main() {
     print!("\nScore: {:?}\n", score);
     print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<usize>>());
     eprintln!("\nElapsed: {elapsed:?}");
-    eprintln!("{:#?}",model.forest);
+    //eprintln!("{:#?}",model.forest);
 
 }
