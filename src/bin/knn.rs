@@ -68,57 +68,12 @@ fn k_nearest(dataset: &Vec<Point>, point: &Point, k: usize) -> Vec<Point>{
 }
 
 
-fn knn_predict(model: KNNModel, path: String, config: &EnvironmentConfig, k: usize) -> StreamOutput<Vec<f64>>{
-    let mut env = StreamEnvironment::new(config.clone());
-    let source = CsvSource::<Point>::new(path).has_headers(false).delimiter(b',');
-    let predict_set = env.stream(source)
-    .rich_map(
-        move |x| {
-            let nearest = k_nearest(&model.data, &x, k);
-                if !model.regression {
-                    let mut map: HashMap<String, usize> = HashMap::new();
-                    let mut res = 0.;
-                    for y in nearest {
-                            *map.entry(y.value).or_default() += 1;
-                    }
-                    if let Some(max) = map.into_iter().max_by_key(|(_, v)| *v).map(|(k, _)| k){
-                        if x.value == max {
-                            res = 1.;
-                        }
-                    }
-                    res 
-                }
-                else {
-                    let mut tot: f64=0.;
-                    let mut temp: f64;
-                    for y in &nearest {
-                            temp = y.value.parse().unwrap();
-                            tot+=temp;
-                    }
-                    tot/=(nearest.len() as f64);
-                    temp = x.value.parse().unwrap();
-                    (tot-temp).powi(2) 
-                }
-                        
-        }
-    )
-    .group_by_avg(|&_k| true, |&n| n as f64)
-    .drop_key()
-    .collect_vec();
-
-    let start = Instant::now();
-    env.execute();
-    let elapsed = start.elapsed();
-    eprintln!("Test time: {elapsed:?}"); 
-
-    return predict_set;
-}
-
 impl KNNModel {
     fn new(mode: bool) -> KNNModel {
         KNNModel { regression: mode, ..Default::default()
     }}
 
+    //Train model with a CSV input file
     fn train(&mut self, path: String, config: &EnvironmentConfig){
         //Initialize enviroment
         let mut env = StreamEnvironment::new(config.clone());
@@ -128,7 +83,6 @@ impl KNNModel {
         //Parallel read training dataset
         let train_set = env.stream(source)
         .collect_vec();
-
 
         let start = Instant::now();
         env.execute();
@@ -140,6 +94,62 @@ impl KNNModel {
             self.data = data;
         }    
     }
+
+    //Perform prediction on the model for points read from a CSV input file
+    fn predict(&self, path: String, config: &EnvironmentConfig, k: usize) -> StreamOutput<Vec<f64>>{
+        //Initialize enviroment 
+        let mut env = StreamEnvironment::new(config.clone());
+        let source = CsvSource::<Point>::new(path).has_headers(false).delimiter(b',');
+        let model = self.clone();
+
+        //Parallel prediction operations for each input point
+        let predict_set = env.stream(source)   
+        .rich_map(
+            move |x| {
+                //Compute k-nearest points
+                let nearest = k_nearest(&model.data, &x, k);
+                    //Classification: find most common class in k-nearest and return 1 if equal to expected class, else 0
+                    if !model.regression {
+                        let mut map: HashMap<String, usize> = HashMap::new();
+                        let mut res = 0.;
+                        //Count amount of nearest points for each class
+                        for y in nearest {
+                                *map.entry(y.value).or_default() += 1;
+                        }
+                        //Get class with maximum amount and compare it with expected one
+                        if let Some(max) = map.into_iter().max_by_key(|(_, v)| *v).map(|(k, _)| k){
+                            if x.value == max {
+                                res = 1.;
+                            }
+                        }
+                        res 
+                    }
+                    //Regression: compute average of values of k-nearest, return (average - expected value)^2
+                    else {
+                        let mut tot: f64=0.;
+                        let mut temp: f64;
+                        for y in &nearest {
+                                temp = y.value.parse().unwrap();
+                                tot+=temp;
+                        }
+                        tot/=(nearest.len() as f64);
+                        temp = x.value.parse().unwrap();
+                        (tot-temp).powi(2) 
+                    }
+                            
+            }
+        )
+        .group_by_avg(|&_k| true, |&n| n as f64)
+        .drop_key()
+        .collect_vec();
+    
+        let start = Instant::now();
+        env.execute();
+        let elapsed = start.elapsed();
+        eprintln!("Test time: {elapsed:?}"); 
+    
+        return predict_set;
+    }    
 }
 
 
@@ -148,18 +158,26 @@ fn main() {
     let train_path: String;
     let predict_path: String;
     let k: usize;
+    let reg: bool;
 
     train_path = args[0].parse().expect("Invalid train file path");
     predict_path = args[1].parse().expect("Invalid test file path");
     k = args[2].parse().expect("Invalid K value");
 
-    let mut model = KNNModel::new(true);
+    if args.len()<4 {
+        reg = false;
+    }
+    else{
+        reg = args[3].parse().expect("Invalid regression boolean value");
+    }
+
+
+    let mut model = KNNModel::new(reg);
 
     model.train(train_path, &config);
- 
-    //print results
-    let predict_set = knn_predict(model, predict_path, &config, k);
+    let predict_set = model.predict(predict_path.clone(), &config, k);
+
     if let Some(result) = predict_set.get(){
-        eprintln!{"Score: {:?}",result[0]}
+        eprintln!{"Regression: {:?}, Score: {:?}",model.regression,result[0]}
     }
 }
