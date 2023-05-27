@@ -33,8 +33,16 @@ impl StateAdam {
 
 
 pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
-    path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig) 
+    path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig, regularization: &str, lambda: f64) 
     -> StateAdam {
+
+        let reg_flag;
+        match regularization {
+            "lasso" | "LASSO" => reg_flag = 1,
+            "ridge" | "RIDGE" => reg_flag = 2,
+            "elasitc-net" => reg_flag = 3,
+            _ => reg_flag = 0,
+        }
 
         let source = CsvSource::<Sample>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
@@ -76,7 +84,19 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_
                             let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
                             let error = prediction - y;
                             let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();                            
-                            Some(Sample(sample_grad))
+                            let grad; 
+                            match reg_flag{
+                                //lasso
+                                1 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + if *wi>=0. {lambda} else {-lambda}).collect()),
+                                //ridge
+                                2 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + wi * lambda).collect()),
+                                //elastic-net
+                                3 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + wi * lambda + if *wi>=0. {lambda} else {-lambda}).collect()),
+                                //no regularization
+                                _ => grad = Sample(sample_grad),
+                            }
+                            
+                            Some(grad)     
                             }
                         else {None}}})
                 //the average of the gradients is computed and forwarded as a single value

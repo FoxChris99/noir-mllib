@@ -29,8 +29,16 @@ impl StateSGD {
 
 
 pub fn linear_sgd(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
-    path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig) 
+    path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig, regularization: &str, lambda: f64) 
     -> StateSGD {
+
+        let reg_flag;
+        match regularization {
+            "lasso" | "LASSO" => reg_flag = 1,
+            "ridge" | "RIDGE" => reg_flag = 2,
+            "elasitc-net" => reg_flag = 3,
+            _ => reg_flag = 0,
+        }
 
         let source = CsvSource::<Sample>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
@@ -46,11 +54,17 @@ pub fn linear_sgd(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_i
                 s
                 //each replica filter a number of samples equal to batch size and
                 //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
-                .rich_filter_map(
+                .rich_filter_map({
+                    let mut flag_at_least_one = 0;
                     move |mut x|{
                         let dim = x.0.len();
                         //each iteration just a fraction of data is considered
-                        if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction){
+                        if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) || flag_at_least_one == state.get().epoch{
+                            //make sure at each iteration at least a sample is passed forward
+                            if flag_at_least_one == state.get().epoch{
+                                flag_at_least_one += 1;
+                            }
+                            
                             if normalization==true{
                                 //scale the features and the target
                                 x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
@@ -69,11 +83,25 @@ pub fn linear_sgd(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_i
                             let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
                             let error = prediction - y;
                             let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();
-                            Some(Sample(sample_grad))}
+                            let grad; 
+                            match reg_flag{
+                                //lasso
+                                1 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + if *wi>=0. {lambda} else {-lambda}).collect()),
+                                //ridge
+                                2 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + wi * lambda).collect()),
+                                //elastic-net
+                                3 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + wi * lambda + if *wi>=0. {lambda} else {-lambda}).collect()),
+                                //no regularization
+                                _ => grad = Sample(sample_grad),
+                            }
+                            
+                            Some(grad)          
+
+                        }
                         else{
                             None
                         }
-            })
+            }})
                 //the average of the gradients is computed and forwarded as a single value
                 .group_by_avg(|_x| true, |x| x.clone()).drop_key()//.max_parallelism(1)
             },
