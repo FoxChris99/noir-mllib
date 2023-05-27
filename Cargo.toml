@@ -12,8 +12,10 @@ noir = { git = "https://github.com/deib-polimi/noir.git", version = "0.1.0" }
 rand = "0.8.5"
 serde = "1.0.159"
 nalgebra = "0.32.2"
-ndarray = { version = "0.14", features = ["serde"] }
+ndarray = { version = "0.15", features = ["serde"] }
 regex = "1.8.1"
 #ndarray-linalg = { version = "0.13", features = ["openblas-static"]}
 ordered-float = "3.7.0"
 itertools = "0.10.5"
+linfa = "0.6.1"
+linfa-linear = "0.6.1"
