@@ -12,9 +12,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 //State for SGD
 #[derive(Clone, Serialize, Deserialize, Default)]
-pub struct StateSGD {
+struct StateSGD {
     //regression coefficients
-    pub weights: Vec<f64>,
+    weights: Vec<f64>,
     //total gradient of the batch
     bias:f64,
     //iterations over the dataset
@@ -22,7 +22,7 @@ pub struct StateSGD {
 }
 
 impl StateSGD {
-    pub fn new() -> StateSGD {
+     fn new() -> StateSGD {
         StateSGD {
             weights:  Vec::<f64>::new(),
             bias: 0.,
@@ -75,11 +75,10 @@ impl SupportVectorMachine {
 
             move |s, state| 
             {
-                //shuffle the samples
-                s.shuffle()
+                s
                 //each replica filter a number of samples equal to batch size and
                 //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
-                .rich_map({
+                .rich_filter_map({
                     let mut flag = 0;
                     let mut new_weights = Vec::<f64>::new();
                     let mut new_bias= 0.;
@@ -121,12 +120,6 @@ impl SupportVectorMachine {
                             else{
                                 count2+=1;
                             }
-                            
-                            //at the end of each stream iteration reset the counter and flag
-                            if count2==count{
-                                count2 =1;
-                                flag=0;
-                            }
 
                             let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum::<f64>() + new_bias;
 
@@ -142,9 +135,19 @@ impl SupportVectorMachine {
                             //print!("\nweights: {:?}\n", weights);
                             weights.push(new_bias);
                             //print!("\nweights: {:?}\n", weights);
-                            Sample(weights)
+                            if state.get().epoch == 0{
+                                Some(Sample(weights))}
+                            else{
+                                if count2==count{
+                                    count2 =1;
+                                    flag=0;
+                                Some(Sample(weights))
+                            }
+                            else{
+                                None
+                            }
                         }
-            })
+            }})
                 //the average of the gradients is computed and forwarded as a single value
                 .group_by_avg(|_x| true, |x| x.clone()).drop_key()//.max_parallelism(1)
             },
