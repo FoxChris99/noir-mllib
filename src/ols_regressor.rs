@@ -98,3 +98,89 @@ pub fn ols_training(path_to_data: &String, normalization: bool, train_mean: Vec<
         
         state.weights
 }
+
+
+use ndarray::{Array2, Array1};
+use linfa::Dataset;
+use linfa_linear::LinearRegression;
+use linfa::traits::Fit;
+
+pub fn ols_training_array(path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig) 
+    -> Vec<f64> {
+
+        let source = CsvSource::<Sample>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+        let mut env = StreamEnvironment::new(config.clone());
+        env.spawn_remote_workers();
+
+        let fit = env.stream(source.clone())
+        .replay(
+            2,
+            StateOLS {epoch: 0, weights: Vec::new()},
+
+            move |s, state| 
+            {
+                s
+                .rich_filter_map({
+                    let mut local_matrix: Array2<f64> = Array2::zeros((1,1));
+                    let mut count = 0;
+                    let mut count2 = 0;
+                    let mut target = Vec::<f64>::new();
+                    let mut flag_create_matrix = 0;
+                    move |mut x|{
+                        //first iteration: count the samples
+                        if state.get().epoch==0{
+                            count +=1;
+                            None
+                        }
+                        //second iteration: populate matrix and compute local weights
+                        else{
+                            target.push(x.0.pop().unwrap());                            
+                            if flag_create_matrix == 0{
+                                flag_create_matrix = 1;
+                                local_matrix = Array2::zeros((count, x.0.len()));
+                            }
+                            if normalization==true{
+                                //scale the features and the target
+                                x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
+                            }
+                            local_matrix.row_mut(count2).assign(&Array1::from(x.0));
+                            count2+=1;
+
+                            if count2 == count{
+                                let model = LinearRegression::default().fit(&Dataset::new(local_matrix.clone(), Array1::from(target.clone()))).unwrap();
+                                let mut weights = model.params().to_vec();
+                                weights.push(model.intercept());
+
+                                Some(Sample(weights))
+                            } 
+                            else {
+                                None
+                            } }
+                    }})
+
+            },
+
+             |local_weights: &mut Sample, avg_weights| 
+            {   
+                *local_weights = avg_weights;
+            },
+
+             |state, local_grad| 
+            {   
+                state.weights = local_grad.0;
+            },
+
+            |state| 
+            {   
+                state.epoch+=1;
+                state.epoch<2
+            },
+
+        )
+        .collect_vec();
+
+        env.execute();
+        let state = fit.get().unwrap()[0].clone();
+        
+        state.weights
+}
