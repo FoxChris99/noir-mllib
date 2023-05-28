@@ -9,7 +9,7 @@ use rand::seq::SliceRandom;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Clone, Serialize, Debug, Deserialize, Default)]
-struct DecisionTree {
+struct DTree {
     root: Option<Node>,
 }
 
@@ -32,7 +32,7 @@ enum Node {
     Void {},
 }
 
-fn train_decision_tree(feature_count: usize, min_features: usize, max_features: usize, path: &String, config: EnvironmentConfig) -> DecisionTree {
+fn train_decision_tree(feature_count: usize, min_features: usize, max_features: usize, path: &String, config: EnvironmentConfig) -> DTree {
 
         let mut rng = rand::thread_rng();
         let range = (0..feature_count).collect::<Vec<_>>();
@@ -43,7 +43,7 @@ fn train_decision_tree(feature_count: usize, min_features: usize, max_features: 
             .collect();
 
         let root = build_tree_regression(&mut feature_indices, config, path.clone());
-        DecisionTree { root: Some(root) }
+        DTree { root: Some(root) }
     }
 
 
@@ -74,13 +74,17 @@ fn build_tree_regression(feature_indices: &mut Vec<usize>, config: EnvironmentCo
     env.spawn_remote_workers();
 
     //compute mean of each features and target
-    let result = &env.stream(source)
-    .group_by_avg(|_| true, |x| x.clone()).drop_key().collect_vec().get().unwrap()[0].0;
-    let dim_features = result.len() - 1;
-    let mean_target = result[dim_features];
-    let mean_features = result.iter().take(dim_features).cloned().collect::<Vec::<f64>>();
+    let result = env.stream(source)
+    .group_by_avg(|_| true, |x| x.clone()).drop_key().collect_vec();
     
     env.execute();
+    
+    let res = result.get().unwrap()[0].clone().0;
+    let dim_features = res.len() - 1;
+    let mean_target = res[dim_features];
+    let mean_features = res.iter().take(dim_features).cloned().collect::<Vec::<f64>>();
+    
+
 
     if feature_indices.is_empty() {
         Node::Leaf {
@@ -93,9 +97,10 @@ fn build_tree_regression(feature_indices: &mut Vec<usize>, config: EnvironmentCo
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
 
-        let (max_features, min_features) = &env.stream(source.clone())
+        let result = env.stream(source.clone())
         .fold_assoc((vec![f64::MIN;dim_features],vec![f64::MAX;dim_features]), 
-    |(max, min), x| {
+    |(max, min), mut x| {
+                x.pop();
                 for (i, &elem) in x.iter().enumerate(){
                     if elem>max[i]{
                         max[i] = elem;
@@ -121,10 +126,12 @@ fn build_tree_regression(feature_indices: &mut Vec<usize>, config: EnvironmentCo
                         acc.1[i] = elem;
                     }
                 }})
-        .collect_vec().get().unwrap()[0];
+        .collect_vec();
 
         env.execute();
         
+        let (max_features, min_features) = result.get().unwrap()[0].clone();
+
         let num_splits = 10;
         let upper_split_interval = mean_features.iter().zip(max_features.iter()).map(|(mean, max)| (max - mean) / num_splits as f64).collect::<Vec<f64>>();
         let lower_split_interval = mean_features.iter().zip(min_features.iter()).map(|(mean, min)| (mean - min) / num_splits as f64).collect::<Vec<f64>>();
@@ -140,9 +147,10 @@ fn build_tree_regression(feature_indices: &mut Vec<usize>, config: EnvironmentCo
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         //compute the mean of the features based on their split left or right
-        let result  = &env.stream(source.clone()).fold_assoc(
+        let result  = env.stream(source.clone()).fold_assoc(
             (vec![0.;dim_features],vec![0.;dim_features], vec![0;dim_features], vec![0;dim_features]),
-            move |(left,right, count_left, count_right), x|
+            move |(left,right, count_left, count_right), mut x|{
+            x.pop();
             for (i,&elem) in x.iter().enumerate(){
                 if elem<current_splits[i]/*state.get().current_splits[i]*/{
                     left[i] += elem;
@@ -152,27 +160,30 @@ fn build_tree_regression(feature_indices: &mut Vec<usize>, config: EnvironmentCo
                     right[i] += elem;
                     count_right[i]+=1;
                 }
-            },
+            }},
             |(left,right, count_left, count_right), tuple|{
                 *left = left.iter().zip(tuple.0.iter().zip(count_left.iter())).map(|(a,(b,c))| a+ (b/ *c as f64)).collect::<Vec<f64>>();
                 *right = right.iter().zip(tuple.1.iter().zip(count_right.iter())).map(|(a,(b,c))| a + (b/ *c as f64)).collect::<Vec<f64>>();
                 //counter for the number of replica
                 count_left[0]+=1;
             }
-        ).collect_vec().get().unwrap()[0];
+        ).collect_vec();
 
         env.execute();
 
-        let (left_means, right_means): (Vec<f64>, Vec<f64>) = (result.0.iter().map(|a|a/result.3[0] as f64).collect(), result.1.iter().map(|a|a/result.3[0] as f64).collect());
+        let res = result.get().unwrap()[0].clone();
+
+        let (left_means, right_means): (Vec<f64>, Vec<f64>) = (res.0.iter().map(|a|a/res.3[0] as f64).collect(), res.1.iter().map(|a|a/res.3[0] as f64).collect());
 
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         
         let current_splits = state.clone().current_splits;
 
-        let tuple = &env.stream(source.clone()).fold_assoc(
+        let tuple = env.stream(source.clone()).fold_assoc(
             (vec![0.;dim_features],vec![0.;dim_features], vec![0;dim_features], vec![0;dim_features]),
-            move |(left_mse,right_mse, count_left, count_right), x|
+            move |(left_mse,right_mse, count_left, count_right), mut x|{
+            x.pop();
             for (i,&elem) in x.iter().enumerate(){
                 if elem<current_splits[i]{
                     left_mse[i] += (elem-left_means[i]).powi(2);
@@ -182,17 +193,30 @@ fn build_tree_regression(feature_indices: &mut Vec<usize>, config: EnvironmentCo
                     right_mse[i] += (elem-right_means[i]).powi(2);
                     count_right[i]+=1;
                 }
-            },
+            }},
             |(left,right, count_left, count_right), tuple|{
                 *left = left.iter().zip(tuple.0.iter().zip(count_left.iter())).map(|(a,(b,c))| a+ (b/ *c as f64)).collect::<Vec<f64>>();
                 *right = right.iter().zip(tuple.1.iter().zip(count_right.iter())).map(|(a,(b,c))| a + (b/ *c as f64)).collect::<Vec<f64>>();
-            }).collect_vec().get().unwrap()[0];
-
+            }).collect_vec();
+            
             env.execute();
+
+            let tuple = tuple.get().unwrap()[0].clone();
+
             
             let mse_vec: Vec<f64> = tuple.0.iter().zip(tuple.1.iter()).map(|(a,b)| (a+b)/2.).collect();
 
-            let (feat_idx, &mse) = mse_vec.iter().enumerate().min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap();
+            
+            let (feat_idx, mse) = mse_vec.iter().enumerate().fold((0, std::f64::MAX), |acc, (index, &value)| {
+                if value < acc.1 {
+                    (index, value)
+                } else {
+                    acc
+                }
+            });
+
+            //let (feat_idx, &mse) = mse_vec.iter().enumerate().min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap();
+            
             if mse < state.best_mse {
                 state.best_mse = mse;
                 state.best_feature = feat_idx;
@@ -220,6 +244,7 @@ fn build_tree_regression(feature_indices: &mut Vec<usize>, config: EnvironmentCo
             left,
             right,
         }
+
         }
     }
 
@@ -244,26 +269,26 @@ fn predict_sample(sample: &[f64], node: Node) -> f64 {
 
 
 #[derive(Clone, Serialize, Debug, Deserialize, Default)]
-struct RandomForestRegressor {
-    forest: Vec<DecisionTree>,
+struct DecisionTree {
+    tree: DTree,
     fitted: bool,
 }
 
-impl RandomForestRegressor {fn new() -> RandomForestRegressor{ 
-    RandomForestRegressor{ 
-                forest:  Vec::<DecisionTree>::new(), 
+impl DecisionTree {fn new() -> DecisionTree{ 
+    DecisionTree{ 
+                tree: DTree { root: None },
                 fitted: false,
                 }
     }}
 
 //train the model with sgd or adam
-impl RandomForestRegressor {
+impl DecisionTree {
     fn fit(&mut self, path_to_data: &String, num_features:usize, min_features: usize, max_features: usize, config: EnvironmentConfig)
         {
 
         self.fitted = true;
 
-        let tree = train_decision_tree(num_features, min_features, max_features, path_to_data, config);                          
+        self.tree = train_decision_tree(num_features, min_features, max_features, path_to_data, config);                          
     }
 
 
@@ -274,20 +299,14 @@ impl RandomForestRegressor {
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         
-        let forest = self.forest.clone();
+        let tree = self.tree.clone();
 
         let predictions = env.stream(source)
     
             .map(move |mut x| {
                 let y = x.pop().unwrap();
-                let mut sum = 0.;
-                let mut count = 0.;
-                for tree in forest.clone(){
-                    let pred = predict_sample(&x,tree.root.unwrap());
-                    sum+= pred;
-                    count+=1.;
-                }
-                let squared_err = (y - sum/count).powi(2);
+                let pred = predict_sample(&x,tree.clone().root.unwrap());
+                let squared_err = (y - pred).powi(2);
                 squared_err
             })
             .group_by_avg(|&_k| true, |&v| v).drop_key()   
@@ -307,19 +326,13 @@ impl RandomForestRegressor {
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         
-        let forest = self.forest.clone();
+        let tree = self.tree.clone();
 
         let predictions = env.stream(source)
     
             .map(move |x| {
-                let mut sum = 0.;
-                let mut count = 0.;
-                for tree in forest.clone(){
-                    let pred = predict_sample(&x,tree.root.unwrap());
-                    sum+=pred;
-                    count+=1.;
-                }
-                sum/count
+                let pred = predict_sample(&x,tree.clone().root.unwrap());
+                pred
             })    
             .collect_vec();
         
@@ -345,17 +358,16 @@ fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
 
     //let training_set = "wine_quality.csv".to_string();
-    let training_set = "wine_color.csv".to_string();
-    let data_to_predict = "wine_color.csv".to_string();
+    let training_set = "data.csv".to_string();
+    let data_to_predict = "data.csv".to_string();
 
     let start = Instant::now();
 
-    let mut model = RandomForestRegressor::new();
+    let mut model = DecisionTree::new();
     
     let num_tree = 10;
     let min_features = 3;
     let max_features = 5;
-
     
     model.fit(&training_set, num_tree, min_features, max_features,  config.clone());
 
