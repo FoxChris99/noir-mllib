@@ -2,7 +2,7 @@ use noir::prelude::*;
 use noir_ml::sample::Sample;
 use std::time::Instant;
 use serde::{Deserialize, Serialize};
-use rand::seq::SliceRandom;
+//use rand::seq::SliceRandom;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -25,14 +25,12 @@ enum Node {
     },
 }
 
-fn train_decision_tree(num_features: usize, max_features: usize, max_depth: usize, min_samples: usize, path: &String, config: EnvironmentConfig) -> DTree {
+fn train_decision_tree(num_features: usize, max_depth: usize, min_samples: usize, path: &String, config: EnvironmentConfig) -> DTree {
 
-        let left_treshold_lower = vec![f64::MIN;num_features];
-        let left_treshold_higher = vec![f64::MAX;num_features];
-        let right_treshold_lower = vec![f64::MIN;num_features];
-        let right_treshold_higher = vec![f64::MAX;num_features];
+        let low_treshold = vec![f64::MIN;num_features];
+        let high_treshold = vec![f64::MAX;num_features];
         let mut depth = 0;
-        let root = build_tree_regression(max_features, max_depth, &mut depth, min_samples, config, path.clone());
+        let root = build_tree_regression(low_treshold, high_treshold, max_depth, &mut depth, min_samples, config, path.clone());
         DTree { root: Some(root) }
     }
 
@@ -59,14 +57,22 @@ impl StateSplit {
         }}}
 
 
-fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usize, min_samples: usize, config: EnvironmentConfig, path: String) -> Node {
+fn build_tree_regression(low_treshold: Vec<f64>, high_treshold: Vec<f64>, max_depth: usize, depth: &mut usize, min_samples: usize, config: EnvironmentConfig, path: String) -> Node {
 
     let source = CsvSource::<Sample>::new(path.clone()).has_headers(true).delimiter(b',');
     let mut env = StreamEnvironment::new(config.clone());
     env.spawn_remote_workers();
 
+    let low_tresh = low_treshold.clone();
+    let high_tresh = high_treshold.clone();
     //compute mean of each features and target
     let result = env.stream(source.clone())
+    //filter the samples based on previous splits
+    .filter_map(move |mut x| {let mut flag = 0; 
+            let target = x.0.pop().unwrap();
+            for (i,&elem) in x.0.iter().enumerate(){
+                if low_tresh[i]>elem || elem>high_tresh[i]{flag = 1}} 
+                if flag == 0{x.0.push(target);Some(x)} else{None} })
     .group_by_avg(|_| true, |x| x.clone()).drop_key().collect_vec();
     
     let count_result = env.stream(source)
@@ -74,21 +80,35 @@ fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usiz
 
     env.execute();
     
-    let res = result.get().unwrap()[0].clone().0;
-    let dim_features = res.len()-1;
-    let mean_target = res[dim_features];
-    let mean_features = res.iter().take(dim_features).cloned().collect::<Vec::<f64>>();
+    let results;
+    if let Some(res) = result.get(){
+        if res.len()!=0{
+        results = res[0].clone().0;}
+    
+    else{
+        return Node::Leaf {
+            prediction: 0.127,
+        };
+    }}
+    else{
+        return Node::Leaf {
+            prediction: 0.127,
+        };
+    }
+    let dim_features = results.len()-1;
+    let mean_target = results[dim_features];
+    let mean_features = results.iter().take(dim_features).cloned().collect::<Vec::<f64>>();
     let num_samples = count_result.get().unwrap()[0];
 
-    let mut rng = rand::thread_rng();
-    let range = (0..dim_features).collect::<Vec<_>>();
+    // let mut rng = rand::thread_rng();
+    // let range = (0..dim_features).collect::<Vec<_>>();
+    // let feature_indices: Vec<usize> = range
+    //     .choose_multiple(&mut rng, max_features)
+    //     .cloned()
+    //     .collect();
+    let feature_indices: Vec<usize> = (0..=dim_features-1).collect();
 
-    let feature_indices: Vec<usize> = range
-        .choose_multiple(&mut rng, max_features)
-        .cloned()
-        .collect();
-
-    if feature_indices.is_empty() || *depth == max_depth || num_samples < min_samples{
+    if feature_indices.is_empty() || *depth == max_depth || num_samples < min_samples {
         Node::Leaf {
             prediction: mean_target,
         }
@@ -100,8 +120,16 @@ fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usiz
         env.spawn_remote_workers();
 
         let feature_idx = feature_indices.clone();
+        let low_tresh = low_treshold.clone();
+        let high_tresh = high_treshold.clone();
 
         let result = env.stream(source.clone())
+        //filter the samples based on previous splits
+        .filter_map(move |mut x| {let mut flag = 0; 
+            let target = x.pop().unwrap();
+            for (i,&elem) in x.iter().enumerate(){
+                if low_tresh[i]>elem || elem>high_tresh[i]{flag = 1}} 
+                if flag == 0{x.push(target);Some(x)} else{None} })
         .fold_assoc((vec![f64::MIN;dim_features],vec![f64::MAX;dim_features]), 
     move |(max, min), mut x| {
                 x.pop();
@@ -138,21 +166,29 @@ fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usiz
         
         let (max_vec, min_vec) = result.get().unwrap()[0].clone();
 
-        let num_splits = 10;
+        let num_splits = 2;
         let upper_split_interval = mean_features.iter().zip(max_vec.iter()).map(|(mean, max)| (max - mean) / num_splits as f64).collect::<Vec<f64>>();
         let lower_split_interval = mean_features.iter().zip(min_vec.iter()).map(|(mean, min)| (mean - min) / num_splits as f64).collect::<Vec<f64>>();
         let starting_splits: Vec<f64> = min_vec.iter().zip(lower_split_interval.iter()).map(|(a ,b)| a+b).collect();
         //Find best split
-        let mut state = StateSplit::new(starting_splits);
+        let mut state = StateSplit::new(mean_features.clone());
 
-        for _ in 0..2*num_splits-1{
+        for _ in 0..0{//2*num_splits-1{
         
         let current_splits = state.clone().current_splits;
         let feature_idx = feature_indices.clone();
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
+        let low_tresh = low_treshold.clone();
+        let high_tresh = high_treshold.clone();
         //compute the mean of the features based on their split left or right
         let result  = env.stream(source.clone())
+        //filter the samples based on previous splits
+        .filter_map(move |mut x| {let mut flag = 0; 
+            let target = x.pop().unwrap();
+            for (i,&elem) in x.iter().enumerate(){
+                if low_tresh[i]>elem || elem>high_tresh[i]{flag = 1}} 
+                if flag == 0{x.push(target);Some(x)} else{None} })
         .fold_assoc(
             (vec![0.;dim_features],vec![0.;dim_features], vec![0;dim_features], vec![0;dim_features]),
             move |(left,right, count_left, count_right), mut x|{
@@ -184,14 +220,23 @@ fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usiz
         let left_means: Vec<f64> = res.0.iter().map(|a|a/res.2[0] as f64).collect();
         let right_means: Vec<f64> = res.1.iter().map(|a|a/res.2[0] as f64).collect();
 
+        let low_tresh = low_treshold.clone();
+        let high_tresh = high_treshold.clone();
 
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         
         let current_splits = state.clone().current_splits;
         let feature_idx = feature_indices.clone();
-
-        let tuple = env.stream(source.clone()).fold_assoc(
+        
+        let tuple = env.stream(source.clone())
+        //filter the samples based on previous splits
+        .filter_map(move |mut x| {let mut flag = 0; 
+            let target = x.pop().unwrap();
+            for (i,&elem) in x.iter().enumerate(){
+                if low_tresh[i]>elem || elem>high_tresh[i]{flag = 1}} 
+                if flag == 0{x.push(target);Some(x)} else{None} })
+        .fold_assoc(
             (vec![0.;dim_features],vec![0.;dim_features], vec![0;dim_features], vec![0;dim_features]),
             move |(left_mse,right_mse, count_left, count_right), mut x|{
             x.pop();
@@ -209,8 +254,8 @@ fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usiz
             }
         },
             |(left,right, _, _), tuple|{
-                *left = left.iter().zip(tuple.0.iter().zip(tuple.2.iter())).map(|(a,(b,c))| {if *c!= 0{a+ (b/ *c as f64)} else{0.}}).collect::<Vec<f64>>();
-                *right = right.iter().zip(tuple.1.iter().zip(tuple.3.iter())).map(|(a,(b,c))| {if *c!= 0{a+ (b/ *c as f64)} else{0.}}).collect::<Vec<f64>>();
+                *left = left.iter().zip(tuple.0.iter().zip(tuple.2.iter())).map(|(a,(b,c))| {if *c!= 0{a+ (b/ *c as f64)} else{f64::MAX}}).collect::<Vec<f64>>();
+                *right = right.iter().zip(tuple.1.iter().zip(tuple.3.iter())).map(|(a,(b,c))| {if *c!= 0{a+ (b/ *c as f64)} else{f64::MAX}}).collect::<Vec<f64>>();
             }).collect_vec();
             
             env.execute();
@@ -227,7 +272,7 @@ fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usiz
                 }
             });
 
-            
+            print!("MSE: {:?}\n", mse_vec);
             if mse < state.best_mse {
                 state.best_mse = mse;
                 state.best_feature = feat_idx;
@@ -243,20 +288,27 @@ fn build_tree_regression(max_features: usize, max_depth: usize, depth: &mut usiz
         }
         
         let (mut best_feature_index, best_split_value) = (state.best_feature, state.best_split);
-
+        
         best_feature_index = feature_indices[best_feature_index];
 
         //to track the samples in the stream based on the split made
-        //filter left_treshold_lower < x < left_treshold_higher
-        left_treshold_lower[best_feature_index] = 
-        left_treshold_higher[best_feature_index] = 
-        //filter right_treshold_lower < x < right_treshold_higher
-        right_treshold_lower[best_feature_index] = 
-        right_treshold_higher[best_feature_index] = 
+        //filter low_treshold < x < high_treshold
+        let left_low_treshold = low_treshold.clone();
+        let mut left_high_treshold = high_treshold.clone();
+        left_high_treshold[best_feature_index] = best_split_value.min(high_treshold[best_feature_index]);
+
+        let mut right_low_treshold = low_treshold.clone();
+        let right_high_treshold = high_treshold;
+        right_low_treshold[best_feature_index] = best_split_value.max(low_treshold[best_feature_index]);
+
+        // print!("\n left_low_treshold{:?}\n", left_low_treshold[best_feature_index]);
+        // print!("\nleft_high_treshold {:?}\n", left_high_treshold[best_feature_index]);
+        // print!("\n right_low_treshold{:?}\n", right_low_treshold[best_feature_index]);
+        // print!("\n right_high_treshold{:?}\n", right_high_treshold[best_feature_index]);
 
         *depth+=1;
-        let left = Box::new(build_tree_regression(max_features, max_depth, depth, min_samples, config.clone(), path.clone()));
-        let right = Box::new(build_tree_regression(max_features, max_depth, depth, min_samples, config.clone(), path.clone()));
+        let left = Box::new(build_tree_regression(left_low_treshold, left_high_treshold, max_depth, depth, min_samples, config.clone(), path.clone()));
+        let right = Box::new(build_tree_regression(right_low_treshold, right_high_treshold, max_depth, depth, min_samples, config.clone(), path.clone()));
 
         Node::Split {
             feature_index: best_feature_index,
@@ -301,12 +353,12 @@ impl DecisionTree {fn new() -> DecisionTree{
 
 //train the model with sgd or adam
 impl DecisionTree {
-    fn fit(&mut self, path_to_data: &String, num_features: usize, max_features: usize, max_depth: usize, min_samples: usize, config: EnvironmentConfig)
+    fn fit(&mut self, path_to_data: &String, num_features: usize, max_depth: usize, min_samples: usize, config: EnvironmentConfig)
         {
 
         self.fitted = true;
 
-        self.tree = train_decision_tree(num_features, max_features, max_depth, min_samples, path_to_data, config);                          
+        self.tree = train_decision_tree(num_features, max_depth, min_samples, path_to_data, config);                          
     }
 
 
@@ -381,13 +433,13 @@ fn main() {
 
     let mut model = DecisionTree::new();
     
-    let max_features = 10;
+    let num_features = 10;
     let max_depth = 20;
-    let min_samples = 100;
+    let min_samples = 2;
 
     let start = Instant::now();
     
-    model.fit(&training_set, max_features, max_depth, min_samples,  config.clone());
+    model.fit(&training_set, num_features, max_depth, min_samples,  config.clone());
 
     let elapsed = start.elapsed();
 
