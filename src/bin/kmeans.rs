@@ -11,29 +11,31 @@ use noir::prelude::*;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+#[derive(Default, Serialize, Deserialize, Clone, Debug)]
 struct Point {
-    x: f64,
-    y: f64,
+    coords: Vec<f64>
 }
 
 impl Point {
     fn distance_to(&self, other: &Point) -> f64 {
-        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+        self.coords.iter().zip(other.coords.iter())
+        .map(|(ai, bi)| (ai - bi).powi(2)).sum::<f64>()
+        .sqrt()
     }
 }
 
 impl AddAssign for Point {
-    fn add_assign(&mut self, other: Self) {
-        self.x += other.x;
-        self.y += other.y;
+    fn add_assign(&mut self, other: Point) {
+        self.coords.iter_mut().zip(other.coords.iter()).for_each(|(a,b)| *a+=b);
     }
 }
 
 impl PartialEq for Point {
     fn eq(&self, other: &Self) -> bool {
         let precision = 0.001;
-        (self.x - other.x).abs() < precision && (self.y - other.y).abs() < precision
+        let mut res = true;
+        self.coords.iter().zip(other.coords.iter()).for_each(|(a,b)| if (a-b).abs() > precision {res = false;});
+        res
     }
 }
 
@@ -41,11 +43,11 @@ impl Eq for Point {}
 
 impl PartialOrd for Point {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match self.x.partial_cmp(&other.x) {
+        match self.coords.partial_cmp(&other.coords) {
             Some(core::cmp::Ordering::Equal) => {}
             ord => return ord,
         }
-        self.y.partial_cmp(&other.y)
+        self.coords.partial_cmp(&other.coords)
     }
 }
 
@@ -57,8 +59,9 @@ impl Ord for Point {
 
 impl Hash for Point {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.x.to_le_bytes().hash(state);
-        self.y.to_le_bytes().hash(state);
+        for el in self.coords.iter(){
+            el.to_le_bytes().hash(state);
+        }    
     }
 }
 
@@ -66,13 +69,15 @@ impl Div<f64> for Point {
     type Output = Self;
 
     fn div(self, rhs: f64) -> Self::Output {
+        let mut new_coords = self.coords.clone();
+        new_coords.iter_mut().for_each(|a| *a/=rhs);
         Self {
-            x: self.x / rhs,
-            y: self.y / rhs,
+            coords: new_coords
         }
     }
 }
 
+//Take first n points in csv file as the starting centroids
 fn read_centroids(filename: &str, n: usize) -> Vec<Point> {
     let file = File::open(filename).unwrap();
     csv::ReaderBuilder::new()
@@ -84,13 +89,16 @@ fn read_centroids(filename: &str, n: usize) -> Vec<Point> {
         .collect()
 }
 
-fn select_nearest(point: Point, old_centroids: &[Point]) -> Point {
-    *old_centroids
+//Find the Point in a vector which has the lowest distance from another specified Point
+fn select_nearest(point: &Point, old_centroids: &Vec<Point>) -> Point {
+    let res: Point;
+    res = old_centroids
         .iter()
-        .map(|c| (c, point.distance_to(c)))
+        .map(|c| (c, c.distance_to(&point)))
         .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
         .unwrap()
-        .0
+        .0.clone();
+    res
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -133,22 +141,19 @@ fn main() {
             num_iters,
             initial_state,
             |s, state| {
-                s.map(move |point| (point, select_nearest(point, &state.get().old_centroids), 1))
-                    .group_by_avg(|(_p, c, _n)| *c, |(p, _c, _n)| *p)
+                    s.map(move |point| (point.clone(), select_nearest(&point, &state.get().old_centroids)))
+                    .group_by_avg(|(_p, c)| c.clone(), |(p, _c)| p.clone())
                     .drop_key()
             },
             |update: &mut Vec<Point>, p| update.push(p),
-            move |state, mut update| {
+            move |state, mut update| {                
                 state.centroids.append(&mut update);
             },
             |state| {
-                //eprintln!{"LOOP CONDITION {:?}",state.iter_count};
                 let mut changed: bool = false;
                 state.iter_count += 1;
                 state.centroids.sort_unstable();
                 state.old_centroids.sort_unstable();
-                //eprintln!{"NEW {:?}",state.centroids};
-                //eprintln!{"OLD {:?}",state.old_centroids};
                 if state.centroids != state.old_centroids {
                     changed = true;
                     state.old_centroids.clear();
@@ -164,8 +169,9 @@ fn main() {
     let elapsed = start.elapsed();
     if let Some(res) = res.get() {
         let state = &res[0];
-        eprintln!("Iterations: {}", state.iter_count);
-        eprintln!("Output: {:?}", state.centroids.len());
+        eprintln!("Iterations: {}/{}", state.iter_count,num_iters);
+        eprintln!("Centroids: {:?}", state.centroids.len());
+        eprintln!("Old Centroids: {:?}", state.old_centroids.len());
     }
     eprintln!("Elapsed: {elapsed:?}");
 }
