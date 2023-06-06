@@ -2,7 +2,7 @@ use noir::prelude::*;
 
 use std::{time::Instant};
 
-use noir_ml::{sgd_regressor::linear_sgd, adam_regressor::linear_adam, basic_stat::get_moments, sample::Sample};
+use noir_ml::{sgd_regressor::{linear_sgd, linear_batch_gd}, adam_regressor::linear_adam, basic_stat::get_moments, sample::Sample};
 
 
 #[global_allocator]
@@ -73,10 +73,16 @@ impl RegularizedRegression {
             weights = state.weights;
             },
 
+            "GD" | "gd" => 
+            {
+            let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, self.reg_type.as_str(), lambda);
+            weights = state.weights.to_vec();
+            }
+
             "SGD" | "sgd" | _ => 
             {
-            let state = linear_sgd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, self.reg_type.as_str(), lambda);
-            weights = state.weights;
+            let state = linear_sgd(weight_decay, learn_rate, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, self.reg_type.as_str(), lambda);
+            weights = state.weights.to_vec();
             }
         }    
         self.coefficients = weights.clone();

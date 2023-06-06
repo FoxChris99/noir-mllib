@@ -2,7 +2,7 @@
 use noir::prelude::*;
 use std::time::Instant;
 
-use noir_ml::{sgd_regressor::linear_sgd, adam_regressor::linear_adam, basic_stat::get_moments, sample::Sample, ols_regressor::ols_training};
+use noir_ml::{sgd_regressor::{linear_sgd, linear_batch_gd}, adam_regressor::linear_adam, basic_stat::get_moments, sample::Sample, ols_regressor::{ols_training, ols_training_array}};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -59,13 +59,19 @@ impl LinearRegression {
 
             "ADAM" | "adam"  =>
             {    
-            let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
             weights = state.weights;
             },
 
+            "GD" | "gd" | "mini-batch"|"batch_gd" => 
+            {
+            let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
+            weights = state.weights;
+            }
+
             "SGD" | "sgd" | _ => 
             {
-            let state = linear_sgd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = linear_sgd(weight_decay, learn_rate, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
             weights = state.weights;
             }
         }    
@@ -88,7 +94,8 @@ impl LinearRegression {
                 (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
             }
 
-            let weights = ols_training(path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let weights = ols_training_array(path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            //let weights = ols_training(path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
 
             self.coefficients = weights.clone();
             self.features_coef = weights.iter().take(weights.len()-1).cloned().collect::<Vec::<f64>>();
@@ -206,26 +213,28 @@ impl LinearRegression {
 
 fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
-    let training_set = "forest_fire.csv".to_string();
-    let data_to_predict = "forest_fire.csv".to_string();
+    let training_set = "data/class_10milion_4features_multiclass.csv".to_string();
+    let training_set = "D:/regr_100milion_7features.csv".to_string();
+    let data_to_predict = "data/class_1milion_4features_multiclass.csv".to_string();
  
     let mut model = LinearRegression::new();
     
     //hyper_parameters for the iterative method model.fit
-    let method = "SGD".to_string(); //"ADAM".to_string()
+    //let method = "SGD".to_string(); //"ADAM".to_string()//"GD".to_string()
+    let method = "GD".to_string();
     let num_iters = 100;
     let learn_rate = 1e-1;
-    let data_fraction = 0.001;
+    let data_fraction = 1.;
     let weight_decay = false;
 
-    let normalize = true;
+    let normalize = false;
 
     let start = Instant::now();
     //return the trained model
-    //model.fit(&training_set, method, num_iters, learn_rate, data_fraction, normalize, weight_decay, &config);
+    model.fit(&training_set, method, num_iters, learn_rate, data_fraction, normalize, weight_decay, &config);
 
     //fitting with ols
-    model.fit_ols(&training_set, false, &config);
+    //model.fit_ols(&training_set, false, &config);
 
     let elapsed = start.elapsed();
 
