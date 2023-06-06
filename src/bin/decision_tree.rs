@@ -55,6 +55,7 @@ impl TreeNode {
         if let Some(v) = val {
             self.feature_value = v;
         }
+        
         if data[0].features.len()>0 {
             data.iter().into_group_map_by(|a| a.features[0].to_string()).into_iter().for_each(
                 |a|

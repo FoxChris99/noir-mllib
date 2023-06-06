@@ -58,21 +58,28 @@ impl StateSplit {
 
 
 fn build_tree_regression(low_treshold: Vec<f64>, high_treshold: Vec<f64>, max_depth: usize, depth: &mut usize, min_samples: usize, config: EnvironmentConfig, path: String) -> Node {
-
     let source = CsvSource::<Sample>::new(path.clone()).has_headers(true).delimiter(b',');
     let mut env = StreamEnvironment::new(config.clone());
     env.spawn_remote_workers();
 
     let low_tresh = low_treshold.clone();
     let high_tresh = high_treshold.clone();
+
     //compute mean of each features and target
     let result = env.stream(source.clone())
     //filter the samples based on previous splits
-    .filter_map(move |mut x| {let mut flag = 0; 
+    .filter_map(move |mut x| {
+            let mut flag = 0; 
             let target = x.0.pop().unwrap();
             for (i,&elem) in x.0.iter().enumerate(){
-                if low_tresh[i]>elem || elem>high_tresh[i]{flag = 1}} 
-                if flag == 0{x.0.push(target);Some(x)} else{None} })
+                if low_tresh[i]>elem || elem>high_tresh[i] {flag = 1}
+            } 
+            if flag == 0 {
+                x.0.push(target);
+                Some(x)
+            }
+            else{None} 
+        })
     .group_by_avg(|_| true, |x| x.clone()).drop_key().collect_vec();
     
     let count_result = env.stream(source)
@@ -83,18 +90,15 @@ fn build_tree_regression(low_treshold: Vec<f64>, high_treshold: Vec<f64>, max_de
     let results;
     if let Some(res) = result.get(){
         if res.len()!=0{
-        results = res[0].clone().0;}
-    
+            results = res[0].clone().0;
+        }
+        else{
+            return Node::Leaf {prediction: 0.127};
+        }}
     else{
-        return Node::Leaf {
-            prediction: 0.127,
-        };
-    }}
-    else{
-        return Node::Leaf {
-            prediction: 0.127,
-        };
+        return Node::Leaf {prediction: 0.127};
     }
+    
     let dim_features = results.len()-1;
     let mean_target = results[dim_features];
     let mean_features = results.iter().take(dim_features).cloned().collect::<Vec::<f64>>();
@@ -353,9 +357,7 @@ impl DecisionTree {fn new() -> DecisionTree{
 
 //train the model with sgd or adam
 impl DecisionTree {
-    fn fit(&mut self, path_to_data: &String, num_features: usize, max_depth: usize, min_samples: usize, config: EnvironmentConfig)
-        {
-
+    fn fit(&mut self, path_to_data: &String, num_features: usize, max_depth: usize, min_samples: usize, config: EnvironmentConfig){
         self.fitted = true;
 
         self.tree = train_decision_tree(num_features, max_depth, min_samples, path_to_data, config);                          
