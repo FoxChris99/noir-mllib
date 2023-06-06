@@ -1,3 +1,4 @@
+use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::ops::{AddAssign,Div,Sub,Mul,Add, SubAssign, DivAssign, MulAssign};
 
@@ -115,3 +116,31 @@ impl Add<f64> for Sample {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
+pub struct SampleArray(pub Array1<f64>);
+
+//implement standard operations for our sample vector
+
+impl AddAssign for SampleArray {
+    fn add_assign(&mut self, other: Self) {
+        self.0 = &self.0 + other.0;
+    }
+}
+
+impl Div<f64> for SampleArray {
+    type Output = Self;
+
+    fn div(self, other: f64) -> Self::Output {
+        SampleArray(self.0/other)
+    }
+}
