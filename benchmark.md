@@ -86,10 +86,10 @@
 |      Random Forest     | Random Forest          | Random Forest  | Random Forest          | Random Forest  |
 |                        | Classifier             | Classifier     | Regressor              | Regressor      |
 +------------------------+------------------------+----------------+------------------------+----------------+
-| Dataset                | Noir 10 local replicas | Sklearn Python | Noir 10 local replicas | Sklearn Python |
-| (n° rows, n° features) | Training Time 100 trees| Training Time  | Training TIme 100 trees| Training Time  |
+| Dataset                | Noir 16 local 208 trees| Sklearn Python | Noir 10 local replicas | Sklearn Python |
+| (n° rows, n° features) | maxdepth 6 datafrac 0.1| Training Time  | Training Time 100 trees| Training Time  |
 +------------------------+------------------------+----------------+------------------------+----------------+
-| 1 milion, 4            |  / 1.5 s (median) |                |                        |                |
+| 1 milion, 4            |          302s          |      11 m      |                        |                |
 +------------------------+------------------------+----------------+------------------------+----------------+
 | 10 milion, 4           |                        |                |                        |                |
 +------------------------+------------------------+----------------+------------------------+----------------+
