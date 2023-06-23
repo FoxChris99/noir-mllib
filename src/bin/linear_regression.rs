@@ -43,7 +43,7 @@ impl LinearRegression {
 //train the model with sgd or adam
 impl LinearRegression {
     fn fit(&mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, 
-        data_fraction: f64, normalize: bool, weight_decay: bool, config: &EnvironmentConfig)
+        data_fraction: f64, tol: f64, n_iter_no_change: usize, normalize: bool, weight_decay: bool, config: &EnvironmentConfig)
         {
             
         self.fitted = true;
@@ -65,7 +65,7 @@ impl LinearRegression {
 
             "GD" | "gd" | "mini-batch"|"batch_gd" => 
             {
-            let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
+            let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, tol, n_iter_no_change, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
             weights = state.weights;
             }
 
@@ -213,7 +213,7 @@ impl LinearRegression {
 
 fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
-    let training_set = "data/class_10milion_4features_multiclass.csv".to_string();
+    let training_set = "data/class_10milion_50features_multiclass.csv".to_string();
     let training_set = "D:/regr_100milion_7features.csv".to_string();
     let data_to_predict = "data/class_1milion_4features_multiclass.csv".to_string();
  
@@ -226,12 +226,14 @@ fn main() {
     let learn_rate = 1e-1;
     let data_fraction = 1.;
     let weight_decay = false;
+    let tol = 0.;
+    let n_iter_no_change = 5;
 
     let normalize = false;
 
     let start = Instant::now();
     //return the trained model
-    model.fit(&training_set, method, num_iters, learn_rate, data_fraction, normalize, weight_decay, &config);
+    model.fit(&training_set, method, num_iters, learn_rate, data_fraction, tol, n_iter_no_change, normalize, weight_decay, &config);
 
     //fitting with ols
     //model.fit_ols(&training_set, false, &config);
