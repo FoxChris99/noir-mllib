@@ -20,6 +20,10 @@ pub struct StateSGD {
     global_grad: Vec<f64>,
     //iterations over the dataset
     epoch: usize,
+    //best square loss for early stopping
+    best_loss: f64,
+    //n_iter_no_change
+    n_iter_early_stopping: usize,
 }
 
 impl StateSGD {
@@ -28,13 +32,16 @@ impl StateSGD {
             weights:  Vec::<f64>::new(),
             global_grad: Vec::<f64>::new(),
             epoch : 0,
+            best_loss: f64::MAX,
+            n_iter_early_stopping : 0
         }}}
 
 
 
 pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
-    path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig, regularization: &str, lambda: f64) 
+    path_to_data: &String, tol: f64, n_iter_no_change:usize, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig, regularization: &str, lambda: f64) 
     -> StateSGD {
+
 
         let reg_flag;
         match regularization {
@@ -87,7 +94,7 @@ pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, 
                             let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
                             let error = prediction - y;
                             let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();
-                            let grad; 
+                            let mut grad; 
                             match reg_flag{
                                 //lasso
                                 1 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + if *wi>=0. {lambda} else {-lambda}).collect()),
@@ -98,7 +105,9 @@ pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, 
                                 //no regularization
                                 _ => grad = Sample(sample_grad),
                             }
-                            
+                            //early stopping: we need the loss
+                            if tol!=0.{
+                            grad.0.push(error.powi(2));} //push the square loss for early stopping
                             Some(grad)          
 
                         }
@@ -125,9 +134,25 @@ pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, 
 
             move|state| 
             {   
-                //initialize
                 if state.epoch==0{
-                    state.weights = vec![0.;state.global_grad.len()]
+                    state.weights = vec![0.;state.global_grad.len()];
+                }
+
+                if tol!=0.{
+                let loss = state.global_grad.pop().unwrap();
+                //initialize
+
+                //early stopping if for tot iters the loss doesn't improve
+                if loss > state.best_loss - tol && tol!=0.{
+                    state.n_iter_early_stopping+=1;
+                }
+                else{
+                    state.n_iter_early_stopping=0;
+                }
+
+                if state.best_loss>loss{
+                    state.best_loss = loss;
+                }
                 }
                 //update iterations
                  state.epoch +=1;
@@ -137,14 +162,14 @@ pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, 
                     state.weights = state.weights.iter().map(|wi| wi -  learn_rate * 0.002 * wi).collect();
                 }
                 //tolerance=gradient's L2 norm for the stop condition
-                let tol: f64 = state.global_grad.iter().map(|v| v*v).sum();
-                //reset the global gradient for the next iteration
-                state.global_grad = vec![0.;state.weights.len()];
+                //let grad_tol: f64 = state.global_grad.iter().map(|v| v*v).sum();
+
                 //loop condition
-                if tol.sqrt() < 1e-4{
-                    print!("Tolerance: epoch {:?}\n", state.epoch);
+                if state.n_iter_early_stopping >= n_iter_no_change {
+                    print!("Early Stopping: {:?}", state.epoch);
                 }
-                state.epoch < num_iters && tol.sqrt() > 1e-4
+
+                state.epoch < num_iters && state.n_iter_early_stopping < n_iter_no_change 
             },
 
         )
