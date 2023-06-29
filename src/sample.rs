@@ -1,4 +1,5 @@
 use ndarray::Array1;
+use ndarray::Array2;
 use serde::{Deserialize, Serialize};
 use std::ops::{AddAssign,Div,Sub,Mul,Add, SubAssign, DivAssign, MulAssign};
 
@@ -119,7 +120,27 @@ impl Add<f64> for Sample {
 
 
 
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
+pub struct NNvector(pub Vec<(Array2<f64>, Array2<f64>)>);
 
+//implement standard operations for our sample vector
+
+impl AddAssign for NNvector {
+    fn add_assign(&mut self, other: Self) {
+        for (i, (w,b)) in other.0.iter().enumerate(){
+        self.0[i].0 = &self.0[i].0 + w;
+        self.0[i].1 = &self.0[i].1 + b;
+        }
+    }
+}
+
+impl Div<f64> for NNvector {
+    type Output = Self;
+
+    fn div(self, other: f64) -> Self::Output {
+        NNvector(self.0.iter().map(|(w,b)| (w/other,b/other)).collect())
+    }
+}
 
 
 
