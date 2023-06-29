@@ -28,11 +28,7 @@ macro_rules! Model {
 
 #[macro_export]
 macro_rules! Dense {
-    ($x:expr ,$y:expr, $a:expr) => {
-        {
-            Dense::new(
-                $x, $y, $a
-            );
-        }
-    };
+    ($x:expr ,$y:expr, $a:expr) => {{
+        Dense::new($x, $y, $a);
+    }};
 }

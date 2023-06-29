@@ -931,6 +931,7 @@ dependencies = [
  "mimalloc",
  "nalgebra",
  "ndarray",
+ "ndarray-rand",
  "noir",
  "ordered-float",
  "rand",
