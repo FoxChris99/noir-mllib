@@ -112,7 +112,7 @@ impl Sequential<Dense> {
 
     pub fn parallel_train(&mut self, method: String, learn_rate: f64, num_iters: usize, 
         path_to_data: &String, tol: f64, n_iter_no_change:usize, normalization: bool, config: &EnvironmentConfig) 
-        -> StateNN<Dense> {
+         {
     
             let loss = self.loss.clone();
             let optimizer = self.optimizer.clone();
@@ -185,9 +185,12 @@ impl Sequential<Dense> {
                                 }
                                 // cost computation
                                 let y_hat = a_cache.pop().unwrap();  
-                                let (loss, mut da) = criteria(y_hat, y.clone(), loss.clone());
+                                let (loss, mut da) = criteria(y_hat.clone(), y.clone(), loss.clone());
                                 
-                    
+                                // if state.get().epoch == 999{
+                                // print!("y_hat: {:}, Y: {:}\n", y_hat, y);
+                                // }
+
                                 // back propagation
                                 let mut dw_cache = vec![];
                                 let mut db_cache = vec![];
@@ -213,8 +216,9 @@ impl Sequential<Dense> {
                                 if count2==count{
                                     count2 = 0;
                                     flag = 0;
-                                    
                                 }
+                                //push loss to compute the global loss each epoch
+                                forward_weights.push((Array2::from_elem((1,1), loss),Array2::from_elem((1,1), 0.)));
                                 Some(NNvector(forward_weights.clone()))
                             }
                 }})
@@ -228,10 +232,11 @@ impl Sequential<Dense> {
                     *local_weights = weights.0;}
                 },
     
-                move |state, local_weights| 
+                move |state, mut local_weights| 
                 {   
                     //we don't want to read empty replica gradient (this should be solved by using the max_parallelism(1) above)
                     if local_weights.len()!=0{
+                        state.loss = local_weights.pop().unwrap().0.into_raw_vec()[0];
                         for (i,layer) in local_weights.iter().enumerate(){
                             state.layers[i].w = layer.0.clone();
                             state.layers[i].b = layer.1.clone();
@@ -243,6 +248,7 @@ impl Sequential<Dense> {
                 move|state| 
                 {   
                     //update iterations
+                    //print!("Epoch: {:?}, Loss: {:?}\n", state.epoch, state.loss);
                     state.epoch +=1;
                     state.epoch < num_iters
                 },
@@ -253,7 +259,7 @@ impl Sequential<Dense> {
         env.execute();
     
         let state = fit.get().unwrap()[0].clone();
-        state
+        self.layers = state.layers;
     }
 
 
@@ -331,8 +337,8 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
                             }
                             // cost computation
                             let y_hat = a_cache.pop().unwrap();  
-                            let (loss, mut da) = criteria(y_hat, y.clone(), loss.clone());
-                            
+                            let (loss, mut da) = criteria(y_hat.clone(), y.clone(), loss.clone());
+
                 
                             // back propagation
                             let mut dw_cache = vec![];
@@ -435,6 +441,7 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
     pub fn score(&self, path_to_data: &String, normalization: bool, config: &EnvironmentConfig) -> f64 {
 
         let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+        //let source = CsvSource::<Array2<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
 
@@ -449,11 +456,11 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
             let y = Array2::from_elem((1,1), x.pop().unwrap());
             let mut x = Array2::from_shape_vec((1,x.len()), x).unwrap();
             for layer in layers.iter() {
+
                 (_, x) = layer.forward(x);
             }
-
-            let (loss, _) = criteria(x, y, loss_type.clone());
-
+            let (loss, _) = criteria(x.clone(), y.clone(), loss_type.clone());
+            //print!("y_hat: {:}, Y: {:}\n", x, y);
             loss
         })
         .group_by_avg(|_|true, |&sample_loss| sample_loss).drop_key().collect_vec();
@@ -507,7 +514,7 @@ fn main() {
     ]);
     model.summary();
     model.compile(Optimizer::SGD(0.01), Loss::MSE);
-    model.parallel_train("sgd".to_string(), 1e-1, 100, &training_set, 1e-4, 5, false, &config);
+    model.parallel_train("sgd".to_string(), 1e-1, 1000, &training_set, 1e-4, 5, false, &config);
     
     //let predict = model.predict(&new_set, false, &config);
     
