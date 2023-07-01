@@ -53,7 +53,7 @@ impl RegularizedRegression {
 //train the model with sgd or adam
 impl RegularizedRegression {
     fn fit(&mut self, path_to_data: &String, method: String, num_iters:usize, learn_rate: f64, 
-        data_fraction: f64, normalize: bool, lambda: f64, weight_decay: bool, config: &EnvironmentConfig)
+        data_fraction: f64, tol:f64, n_iter_no_change:usize, normalize: bool, lambda: f64, weight_decay: bool, config: &EnvironmentConfig)
         {
             
         self.fitted = true;
@@ -75,7 +75,7 @@ impl RegularizedRegression {
 
             "GD" | "gd" => 
             {
-            let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, self.reg_type.as_str(), lambda);
+            let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, tol, n_iter_no_change, normalize, self.train_mean.clone(), self.train_std.clone(), config, self.reg_type.as_str(), lambda);
             weights = state.weights.to_vec();
             }
 
@@ -215,9 +215,11 @@ fn main() {
     let normalize = true;
     let lambda = 0.004;
     let weight_decay = false;
+    let tol = 0.;
+    let n_iter_no_change = 5;
 
     //return the trained model
-    model.fit(&training_set, method, num_iters, learn_rate, data_fraction, normalize, lambda, weight_decay, &config);
+    model.fit(&training_set, method, num_iters, learn_rate, data_fraction, tol, n_iter_no_change, normalize, lambda, weight_decay, &config);
 
     //compute the score over the training set
     let r2 = model.clone().score(&training_set, &config);
