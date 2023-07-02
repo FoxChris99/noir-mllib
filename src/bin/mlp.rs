@@ -3,7 +3,7 @@ use noir::{prelude::*, config};
 use std::time::Instant;
 use serde::{Serialize,Deserialize};
 
-use noir_ml::{prelude::*, sample::NNvector};
+use noir_ml::{nn_prelude::*, sample::NNvector, basic_stat::get_moments};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -33,6 +33,8 @@ pub struct Sequential<T: LayerTrait> {
     pub layers: Vec<T>,
     pub optimizer: Optimizer,
     pub loss: Loss,
+    pub train_mean: Vec<f64>,
+    pub train_std: Vec<f64>
 }
 
 
@@ -42,6 +44,8 @@ impl Sequential<Dense> {
             layers: layers.try_into().unwrap(),
             optimizer: Optimizer::None,
             loss: Loss::None,
+            train_mean: Vec::new(),
+            train_std: Vec::new(),
         }
     }
 
@@ -110,25 +114,33 @@ impl Sequential<Dense> {
     }
     
 
-    pub fn parallel_train(&mut self, method: String, learn_rate: f64, num_iters: usize, 
+    pub fn parallel_train(&mut self, num_iters: usize, 
         path_to_data: &String, tol: f64, n_iter_no_change:usize, normalization: bool, config: &EnvironmentConfig) 
          {
     
             let loss = self.loss.clone();
             let optimizer = self.optimizer.clone();
-            let lr = 0.001;
-            // if normalization==true{
-            //     (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
-            // }
+            let lr = match optimizer {
+                Optimizer::SGD { lr } => {lr},
+                _ => {0.} //wip
+            };
+
+            if normalization==true{
+                (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
+            }
     
-            // let train_mean = self.train_mean.clone();
-            // let train_std = self.train_std.clone();
+            let train_mean = self.train_mean.clone();
+            let train_std = self.train_std.clone();
     
             let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
             let mut env = StreamEnvironment::new(config.clone());
             env.spawn_remote_workers();
             let fit = env.stream(source.clone())
-            .map(|mut x| {
+            .map(move |mut x| {
+                if normalization==true{
+                    //scale the features and the target
+                    x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
+                }
                 let y = Array2::from_elem((1,1), x.pop().unwrap());
                 NNvector(vec![(Array2::from_shape_vec((1,x.len()),x).unwrap(),y)])
             })
@@ -158,11 +170,6 @@ impl Sequential<Dense> {
                             count2+=1;
                             let x = v.0[0].0.clone();
                             let y = v.0[0].1.clone();
-                                // if normalization==true{
-                                //     //scale the features and the target
-                                //     x = (x - train_mean)/train_std;
-                                //     }
-                                //the target is in the last element of each sample
     
                                 //in the first sample "iteration" of the stream we set the final weights of the last global iteration
                                 if flag == 0{
@@ -270,18 +277,22 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
 
         let loss = self.loss.clone();
         let optimizer = self.optimizer.clone();
-        // if normalization==true{
-        //     (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
-        // }
+        if normalization==true{
+            (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
+        }
 
-        // let train_mean = self.train_mean.clone();
-        // let train_std = self.train_std.clone();
+        let train_mean = self.train_mean.clone();
+        let train_std = self.train_std.clone();
 
         let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
         let fit = env.stream(source.clone())
-        .map(|mut x| {
+        .map(move |mut x| {
+            if normalization==true{
+                //scale the features and the target
+                x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
+            }
             let y = Array2::from_elem((1,1), x.pop().unwrap());
             NNvector(vec![(Array2::from_shape_vec((1,x.len()),x).unwrap(),y)])
         })
@@ -310,11 +321,7 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
                         count2+=1;
                         let x = v.0[0].0.clone();
                         let mut y = v.0[0].1.clone();
-                            // if normalization==true{
-                            //     //scale the features and the target
-                            //     x = (x - train_mean)/train_std;
-                            //     }
-                            //the target is in the last element of each sample
+
 
                             //in the first sample "iteration" of the stream we set the final weights of the last global iteration
                             if flag == 0{
@@ -438,7 +445,7 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
     }
 
 
-    pub fn score(&self, path_to_data: &String, normalization: bool, config: &EnvironmentConfig) -> f64 {
+    pub fn compute_loss(&self, path_to_data: &String, normalization: bool, config: &EnvironmentConfig) -> f64 {
 
         let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
         //let source = CsvSource::<Array2<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
@@ -469,6 +476,45 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
         
         score.get().unwrap()[0]
 }
+
+
+pub fn score(&self, path_to_data: &String, normalization: bool, config: &EnvironmentConfig) -> f64 {
+
+    let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+    //let source = CsvSource::<Array2<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+    let mut env = StreamEnvironment::new(config.clone());
+    env.spawn_remote_workers();
+
+    let layers = self.layers.clone();
+    let loss_type = self.loss.clone();
+
+    let score = env.stream(source.clone())
+    .map(move |mut x| {
+        // if normalization == true{
+        //     x =
+        // }
+        let class = x[x.len()-1] as usize;
+        let y = Array2::from_elem((1,1), x.pop().unwrap());
+        let mut x = Array2::from_shape_vec((1,x.len()), x).unwrap();
+        for layer in layers.iter() {
+
+            (_, x) = layer.forward(x);
+        }
+        let (max_index, _) = x.iter().enumerate().max_by_key(|(_, &value)| value.to_bits()).unwrap();
+        if max_index == class{
+            1.
+        }
+        else{
+            0.
+        }
+    })
+    .group_by_avg(|_|true, |&v| v).drop_key().collect_vec();
+    
+    env.execute();
+    
+    score.get().unwrap()[0]
+}
+
 
 }
     // pub fn evaluate(&self, x: Array2<f64>, y: Array2<f64>) -> f64 {
@@ -506,24 +552,30 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
 fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
     //let training_set = "data/class_10milion_50features_multiclass.csv".to_string();
-    let training_set = "diabetes.csv".to_string();
+    let training_set = "wine_color.csv".to_string();
     let mut model = Sequential::new(&[
-        Dense::new(10, 10, Activation::Relu),
-        Dense::new(10, 10, Activation::Relu),
-        Dense::new(1, 10, Activation::Relu),
+        Dense::new(8, 11, Activation::Relu),
+        Dense::new(8, 8, Activation::Relu),
+        Dense::new(2, 8, Activation::Softmax),
     ]);
     model.summary();
-    model.compile(Optimizer::SGD(0.01), Loss::MSE);
-    model.parallel_train("sgd".to_string(), 1e-1, 1000, &training_set, 1e-4, 5, false, &config);
+    model.compile(Optimizer::SGD{lr: 0.01}, Loss::NLL);
+
+    let start = Instant::now();
+
+    model.parallel_train(10, &training_set, 1e-4, 5, false, &config);
     
+    let elapsed = start.elapsed();
+
     //let predict = model.predict(&new_set, false, &config);
     
-    let score = model.score(&training_set, false, &config);
+    let loss = model.compute_loss(&training_set, false, &config);
+    let score = model.score(&training_set, false, &config);    
 
-
-    print!("Loss: {:?}", score);
+    print!("Loss: {:?}\n", loss);
+    print!("Score: {:?}\n", score);
     
-
+    print!("\nElapsed fit: {elapsed:?}");
     // print!("\nCoefficients: {:?}\n", model.features_coef);
     // print!("Intercept: {:?}\n", model.intercept);  
     // print!("\nR2 score: {:?}\n", r2);
