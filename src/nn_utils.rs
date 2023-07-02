@@ -1,11 +1,11 @@
 #[allow(unused)]
-use crate::prelude::*;
+use crate::nn_prelude::*;
 
 #[macro_export]
 macro_rules! rand_array {
     ($($x:expr),*) => {
         {
-            Array::random(($($x,)*), Uniform::new(-0.01, 0.01))
+            Array::random(($($x,)*), Uniform::new(0.001, 0.01))
         }
     };
 }
@@ -28,7 +28,11 @@ macro_rules! Model {
 
 #[macro_export]
 macro_rules! Dense {
-    ($x:expr ,$y:expr, $a:expr) => {{
-        Dense::new($x, $y, $a);
-    }};
+    ($x:expr ,$y:expr, $a:expr) => {
+        {
+            Dense::new(
+                $x, $y, $a
+            );
+        }
+    };
 }

@@ -1,9 +1,9 @@
-use crate::prelude::*;
+use crate::nn_prelude::*;
 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Optimizer {
-    SGD(f64),
+    SGD{lr: f64},
     Adam{
         lr: f64,
         beta1: f64,
