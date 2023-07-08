@@ -254,6 +254,11 @@ impl Sequential<Dense> {
                     //we don't want to read empty replica gradient (this should be solved by using the max_parallelism(1) above)
                     if local_dw.len()!=0{
                         state.loss = local_dw.pop().unwrap().0.into_raw_vec()[0];
+                        
+                        if state.best_loss>state.loss{
+                            state.best_network = state.layers.clone();
+                        }
+
                         match optimizer {
                             Optimizer::SGD { lr } => {
                                 for (i,layer) in local_dw.iter().enumerate(){
@@ -303,7 +308,6 @@ impl Sequential<Dense> {
 
                     if state.best_loss>state.loss{
                         state.best_loss = state.loss;
-                        state.best_network = state.layers.clone();
                     }
 
                     if state.n_iter_early_stopping >= n_iter_no_change {
@@ -311,7 +315,7 @@ impl Sequential<Dense> {
                     }
                     }
                     state.epoch +=1;
-                    state.epoch < num_iters + 1 && state.n_iter_early_stopping < n_iter_no_change 
+                    state.epoch < num_iters + 1 && state.n_iter_early_stopping < n_iter_no_change
                 },
     
             )
@@ -700,7 +704,7 @@ fn main() {
 
     let start = Instant::now();
 
-    model.parallel_train(2000, &training_set, 0.5, 0. ,50, false, true, &config);
+    model.parallel_train(3000, &training_set, 1., 1e-4 ,100, false, true, &config);
     
     let elapsed = start.elapsed();
 
