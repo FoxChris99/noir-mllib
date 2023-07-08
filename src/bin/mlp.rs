@@ -496,16 +496,28 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
                 //scale the features and the target
                 x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
             }
+
+            //SOLO PER TESTARE
+            if layers[0].w.dim().1 == x.len()-1{
+                x.pop();
+            }
+            else{
+                x.pop();
+            }
+
             let mut x = Array2::from_shape_vec((1,x.len()), x).unwrap();
+
             for layer in layers.iter() {
                 (_, x) = layer.forward(x);
             }
-            x.into_raw_vec()
+
+            x.into_raw_vec()[0]
+            
         }).collect_vec();
         
         env.execute();
         
-        predictions.get().unwrap()[0].clone()
+        predictions.get().unwrap()
     }
 
 
@@ -689,18 +701,19 @@ fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
     //let training_set = "data/class_10milion_50features_multiclass.csv".to_string();
     //let training_set = "data/class_1milion_4features_multiclass.csv".to_string();
-    let training_set = "diabetes.csv".to_string();
+    //let training_set = "diabetes.csv".to_string();
+    let training_set = "housing_numeric.csv".to_string();
     //let training_set = "forest_fire.csv".to_string();
     //let training_set: String = "data/class_1milion_4features_multiclass.csv".to_string();
     let mut model = Sequential::new(&[
-        Dense::new(32, 10, Activation::Relu),
+        Dense::new(32, 5, Activation::Relu),
         Dense::new(32, 32, Activation::Relu),
         Dense::new(32, 32, Activation::Relu),
         Dense::new(1, 32, Activation::Linear),
     ]);
     model.summary();
     //model.compile(Optimizer::SGD{lr: 0.01}, Loss::MSE);
-    model.compile(Optimizer::Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, epsilon: 1e-8 }, Loss::MSE);
+    model.compile(Optimizer::Adam { lr: 0.1, beta1: 0.9, beta2: 0.999, epsilon: 1e-8 }, Loss::MSE);
 
     let start = Instant::now();
 
@@ -708,7 +721,7 @@ fn main() {
     
     let elapsed = start.elapsed();
 
-    //let predict = model.predict(&new_set, false, &config);
+    let predict = model.predict(&training_set, false, &config);
     
     let loss = model.compute_loss(&training_set, false, &config);
     let score = model.score(&training_set, false, &config);  
@@ -720,7 +733,7 @@ fn main() {
     // print!("\nCoefficients: {:?}\n", model.features_coef);
     // print!("Intercept: {:?}\n", model.intercept);  
     // print!("\nR2 score: {:?}\n", r2);
-    // print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<f64>>());
+    print!("\nPredictions: {:?}\n", predict.iter().take(5).cloned().collect::<Vec<f64>>());
     // eprintln!("\nElapsed fit: {elapsed:?}");
     // eprintln!("\nElapsed score: {elapsed_score:?}"); 
     // eprintln!("\nElapsed pred: {elapsed_pred:?}");     
