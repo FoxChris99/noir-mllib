@@ -87,56 +87,12 @@ impl Sequential<Dense> {
         
     }}
 
-    pub fn fit(&mut self, x: Array2<f64>, y: Array2<f64>, epochs: usize, verbose: bool) {
-        for i in 0..epochs {
-            // cache (required for back propagation)
-            let mut z_cache = vec![];
-            let mut a_cache = vec![];
-            let mut z: Array2<f64>;
-            let mut a = x.clone();
-            a_cache.push(a.clone());
-
-            // forward propagate and cache the results
-            for layer in self.layers.iter() {
-                (z, a) = layer.forward(a.clone());
-                z_cache.push(z.clone());
-                a_cache.push(a.clone());
-            }
-            // cost computation
-            let y_hat = a_cache.pop().unwrap();  
-            let (loss, mut da) = criteria(y_hat, y.clone(), self.loss.clone());
-            
-            if verbose {
-                println!("Epoch: {}/{} cost computation: {:?}", i, epochs, loss);
-            }
-
-            // back propagation
-            let mut dw_cache = vec![];
-            let mut db_cache = vec![];
-            let mut dw: Array2<f64>;
-            let mut db: Array2<f64>;
-
-            // loss = da
-            for ((layer, z), a) in (self.layers.iter()).rev().zip((z_cache.clone().iter()).rev()).zip((a_cache.clone().iter()).rev()) {
-                (dw, db, da) = layer.backward(z.clone(), a.clone(), da);
-                dw_cache.insert(0, dw);
-                db_cache.insert(0, db);
-            }
-            
-
-            for ((layer, dw), db) in (self.layers.iter_mut()).zip(dw_cache.clone().iter()).zip(db_cache.clone().iter()) {
-                layer.optimize(dw.clone(), db.clone(), self.optimizer.clone());
-            }
-        }
-    }
-    
 
     pub fn parallel_train(&mut self, num_iters: usize, 
         path_to_data: &String, data_fraction: f64, tol: f64, n_iter_no_change:usize, normalization: bool, verbose: bool, config: &EnvironmentConfig) 
          {
     
             let loss = self.loss.clone();
-            let loss_normalize = loss.clone();
             let optimizer = self.optimizer.clone();
             let lr = match optimizer {
                 Optimizer::SGD { lr } => {lr},
@@ -145,7 +101,7 @@ impl Sequential<Dense> {
 
             if normalization==true{
                 (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
-                match loss_normalize {
+                match loss {
                     Loss::NLL => {
                         self.train_mean = self.train_mean.iter().cloned().take(self.train_mean.len()-1).collect();
                         self.train_std = self.train_std.iter().cloned().take(self.train_std.len()-1).collect();
@@ -155,6 +111,17 @@ impl Sequential<Dense> {
                         self.task = "regression".to_string();
                     }
             }}
+
+            else{
+                match loss {
+                    Loss::NLL => {
+                        self.task = "classification".to_string();
+                    },
+                    _ =>{
+                        self.task = "regression".to_string();
+                    }
+                }
+            }
             
             let task = self.task.clone();
             let train_mean = self.train_mean.clone();
@@ -206,10 +173,12 @@ impl Sequential<Dense> {
 
                             if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) {
                             
+                            
                             let mut forward_weights: Vec<(Array2<f64>,Array2<f64>)> = Vec::new();
                             count2+=1;
-                            let x = v.0[0].0.clone();
-                            let y = v.0[0].1.clone();
+                            let mut x = v.0[0].0.clone();
+                            let mut y = v.0[0].1.clone();
+
     
                                 //in the first sample "iteration" of the stream we set the final weights of the last global iteration
                                 if flag == 0{
@@ -233,37 +202,29 @@ impl Sequential<Dense> {
                                 // cost computation
                                 let y_hat = a_cache.pop().unwrap();  
 
-                                // if state.get().epoch == 15{
-                                // print!("y_hat: {:}, Y: {:}\n", y_hat, y);
-                                // }
-
                                 let (loss, mut da) = criteria(y_hat.clone(), y.clone(), loss.clone());
                                 
-                                // if state.get().epoch == 999{
-                                // print!("y_hat: {:}, Y: {:}\n", y_hat, y);
-                                // }
-
                                 // back propagation
-                                let mut dw_cache = vec![];
-                                let mut db_cache = vec![];
+                                // let mut dw_cache = vec![];
+                                // let mut db_cache = vec![];
                                 let mut dw: Array2<f64>;
                                 let mut db: Array2<f64>;
                     
                                 // loss = da
                                 for ((layer, z), a) in (new_layers.iter()).rev().zip((z_cache.clone().iter()).rev()).zip((a_cache.clone().iter()).rev()) {
                                     (dw, db, da) = layer.backward(z.clone(), a.clone(), da);
-                                    dw_cache.insert(0, dw);
-                                    db_cache.insert(0, db);
+                                    // dw_cache.insert(0, dw);
+                                    // db_cache.insert(0, db);
+                                    forward_weights.insert(0,(dw.clone(), db.clone()));
                                 }
                                 
                     
-                                for ((layer, dw), db) in (new_layers.iter_mut()).zip(dw_cache.clone().iter()).zip(db_cache.clone().iter())
-                                {
-                                        // match optimizer {
-                                           //"sgd"
-                                            forward_weights.push((layer.w.clone() - lr * dw, layer.b.clone() - lr * db));
-                                            // Adam { lr, beta1, beta2, epsilon } =>         
-                                }
+                                // for ((layer, dw), db) in (new_layers.iter_mut()).zip(dw_cache.clone().iter()).zip(db_cache.clone().iter())
+                                // {
+                                    
+                                //      forward_weights.push((dw.clone(), db.clone()))
+                        
+                                // }
     
                                 if count2==count{
                                     count2 = 0;
@@ -282,22 +243,43 @@ impl Sequential<Dense> {
                     .group_by_avg(|_x| true, |x| x.clone()).drop_key()
                 },
     
-                move |local_weights: &mut Vec<(Array2<f64>,Array2<f64>)>, weights| 
+                move |local_dw: &mut Vec<(Array2<f64>,Array2<f64>)>, dweights| 
                 {   
-                    if weights.0.len()!=0{
-                    *local_weights = weights.0;}
+                    if dweights.0.len()!=0{
+                    *local_dw = dweights.0;}
                 },
     
-                move |state, mut local_weights| 
+                move |state, mut local_dw| 
                 {   
                     //we don't want to read empty replica gradient (this should be solved by using the max_parallelism(1) above)
-                    if local_weights.len()!=0{
-                        state.loss = local_weights.pop().unwrap().0.into_raw_vec()[0];
-                        for (i,layer) in local_weights.iter().enumerate(){
-                            state.layers[i].w = layer.0.clone();
-                            state.layers[i].b = layer.1.clone();
-                        }
-                        
+                    if local_dw.len()!=0{
+                        state.loss = local_dw.pop().unwrap().0.into_raw_vec()[0];
+                        match optimizer {
+                            Optimizer::SGD { lr } => {
+                                for (i,layer) in local_dw.iter().enumerate(){
+                                    Zip::from(&mut state.layers[i].w).and(&layer.0).for_each(|w, &dw| *w -= lr * dw);
+                                    Zip::from(&mut state.layers[i].b).and(&layer.1).for_each(|b, &db| *b -= lr * db);
+                                }
+                            }
+                            Optimizer::Adam { lr, beta1, beta2, epsilon } => {
+                                for (i,layer) in local_dw.iter().enumerate(){
+                                    Zip::from(&mut state.layers[i].m).and(&layer.0).for_each(|m, &dw| *m = *m * beta1 + (1. - beta1) * dw);
+                                    Zip::from(&mut state.layers[i].v).and(&layer.0).for_each(|v, &dw| *v = *v * beta2 + (1. - beta2) * dw.powi(2));
+                                    Zip::from(&mut state.layers[i].m_b).and(&layer.1).for_each(|m, &db| *m = *m * beta1 + (1. - beta1) * db);
+                                    Zip::from(&mut state.layers[i].v_b).and(&layer.1).for_each(|v, &db| *v = *v * beta2 + (1. - beta2) * db.powi(2));
+                                    let m_hat = state.layers[i].m.clone()/(1. - beta1.powi(state.epoch as i32));
+                                    let v_hat = state.layers[i].v.clone()/(1. - beta2.powi(state.epoch as i32));
+                                    let mb_hat = state.layers[i].m_b.clone()/(1. - beta1.powi(state.epoch as i32));
+                                    let vb_hat = state.layers[i].v_b.clone()/(1. - beta2.powi(state.epoch as i32));
+                                    let gradw: Array2<f64> = m_hat / (v_hat.mapv(|v| v.sqrt()+ epsilon));
+                                    let gradb: Array2<f64> = mb_hat / (vb_hat.mapv(|v| v.sqrt()+ epsilon));
+                                    Zip::from(&mut state.layers[i].w).and(&gradw).for_each(|w: &mut f64, &dw| *w -= lr * dw);
+                                    Zip::from(&mut state.layers[i].b).and(&gradb).for_each(|b: &mut f64, &db| *b -= lr * db);
+                                }
+                            }
+                            Optimizer::None => todo!(),
+
+                        }   
                     }
                 },
     
@@ -305,7 +287,7 @@ impl Sequential<Dense> {
                 {   
                     //update iterations
                     if verbose && state.epoch>0{
-                        print!("Epoch: {:?}/{:?} --- Loss: {:?}\n", state.epoch, num_iters, state.loss);}
+                        print!("Iter: {:?}/{:?} --- Loss: {:?}\n", state.epoch, num_iters, state.loss);}
 
 
                     if state.epoch != 0
@@ -325,7 +307,7 @@ impl Sequential<Dense> {
                     }
 
                     if state.n_iter_early_stopping >= n_iter_no_change {
-                            print!("\nEarly Stopping at epoch: {:?}\n", state.epoch);
+                            print!("\nEarly Stopping at iter: {:?}\n", state.epoch);
                     }
                     }
                     state.epoch +=1;
@@ -338,6 +320,7 @@ impl Sequential<Dense> {
         env.execute();
     
         let state = fit.get().unwrap()[0].clone();
+
         self.layers = state.best_network;
 
     }
@@ -701,21 +684,23 @@ pub fn score(&self, path_to_data: &String, normalization: bool, config: &Environ
 fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
     //let training_set = "data/class_10milion_50features_multiclass.csv".to_string();
-    let training_set = "data/class_1milion_4features_multiclass.csv".to_string();
+    //let training_set = "data/class_1milion_4features_multiclass.csv".to_string();
     let training_set = "diabetes.csv".to_string();
     //let training_set = "forest_fire.csv".to_string();
     //let training_set: String = "data/class_1milion_4features_multiclass.csv".to_string();
     let mut model = Sequential::new(&[
-        Dense::new(16, 10, Activation::Relu),
-        Dense::new(16, 16, Activation::Relu),
-        Dense::new(1, 16, Activation::Linear),
+        Dense::new(32, 10, Activation::Relu),
+        Dense::new(32, 32, Activation::Relu),
+        Dense::new(32, 32, Activation::Relu),
+        Dense::new(1, 32, Activation::Linear),
     ]);
     model.summary();
-    model.compile(Optimizer::SGD{lr: 0.01}, Loss::MSE);
+    //model.compile(Optimizer::SGD{lr: 0.01}, Loss::MSE);
+    model.compile(Optimizer::Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, epsilon: 1e-8 }, Loss::MSE);
 
     let start = Instant::now();
 
-    model.parallel_train(1000, &training_set, 0.5, 0. ,50, false, true, &config);
+    model.parallel_train(2000, &training_set, 0.5, 0. ,50, false, true, &config);
     
     let elapsed = start.elapsed();
 
