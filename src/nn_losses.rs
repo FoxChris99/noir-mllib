@@ -3,7 +3,6 @@ use crate::nn_prelude::*;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Loss {
     MSE,
-    NLL,
     CCE,
     None,
 }
@@ -26,15 +25,15 @@ pub fn criteria(y_hat: Array2<f64>, y: Array2<f64>, loss_ty: Loss) -> (f64, Arra
         //     (loss, da)
         // },
 
-        NLL => {
-            let da =  y_hat.clone() - y.clone();
-            let loss = -(y * y_hat.mapv(|v| (v+1e-6).log(e))).sum_axis(Axis(1)).mean().unwrap();
-            (loss, da)
-        },
-
         CCE => {
-            let da =  y_hat.clone() - y.clone();
-            let loss = -(y * y_hat.mapv(|v| v.log(e))).sum_axis(Axis(1)).mean().unwrap();
+            let y = y.into_raw_vec()[0] as usize;
+            let mut one_hot_y = Array2::<f64>::zeros((1, y_hat.dim().1));
+            one_hot_y[(0,y)] = 1.;
+            
+            let da =  y_hat.clone() - one_hot_y.clone();
+            //let loss = -(one_hot_y * y_hat.mapv(|v| (v+1e-8).log(e))).sum_axis(Axis(1)).mean().unwrap();
+            // in case of more samples to modify
+            let loss = -y_hat[(0,y)].ln(); 
             (loss, da)
         },
 
