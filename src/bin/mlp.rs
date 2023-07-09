@@ -61,16 +61,19 @@ impl Sequential<Dense> {
     pub fn summary(&self) {
         let mut total_param = 0;
         let mut res = "\nModel Sequential\n".to_string();
-        res.push_str("-------------------------------------------------------------\n");
-        res.push_str("Layer (Type)\t\t Output shape\t\t No.of params\n");
+        res.push_str("_____________________________________________________________\n\n");
+        res.push_str("Layer (Type)\t\t Output Shape\t\t Param #\n");
+        res.push_str("=============================================================\n");
+        res.push_str(&format!("Input\t\t\t  (None, {})\t\t  {}\n", self.layers[0].w.dim().0, 0));
         for layer in self.layers.iter() {
             let a = layer.w.len();
             let b = layer.b.len();
             total_param += a + b;
             res.push_str(&format!("{}\t\t\t  (None, {})\t\t  {}\n", layer.typ(), b, a + b));
         }
-        res.push_str("-------------------------------------------------------------\n");
+        res.push_str("=============================================================\n");
         res.push_str(&format!("Total params: {}\n", total_param));
+        res.push_str("_____________________________________________________________\n");
         println!("{}", res);
     }
 
@@ -78,7 +81,7 @@ impl Sequential<Dense> {
         self.optimizer = optimizer;
         self.loss = loss;
         match self.loss {
-            Loss::NLL => {
+            Loss::CCE => {
                 self.task = "classification".to_string();
             },
             _ =>{
@@ -102,7 +105,7 @@ impl Sequential<Dense> {
             if normalization==true{
                 (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
                 match loss {
-                    Loss::NLL => {
+                    Loss::CCE => {
                         self.train_mean = self.train_mean.iter().cloned().take(self.train_mean.len()-1).collect();
                         self.train_std = self.train_std.iter().cloned().take(self.train_std.len()-1).collect();
                         self.task = "classification".to_string();
@@ -114,7 +117,7 @@ impl Sequential<Dense> {
 
             else{
                 match loss {
-                    Loss::NLL => {
+                    Loss::CCE => {
                         self.task = "classification".to_string();
                     },
                     _ =>{
@@ -135,7 +138,7 @@ impl Sequential<Dense> {
                 let mut y = Array2::from_elem((1,1), 0.);
                 if normalization==true{
                     if task == "classification".to_string(){
-                        //first pop the class
+                        //first pop the target class
                         y = Array2::from_elem((1,1), x.pop().unwrap());
                         x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
                     }
@@ -489,14 +492,12 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
         let layers = self.layers.clone();
         let train_mean = self.train_mean.clone();
         let train_std = self.train_std.clone();
+        let task = self.task.clone();
 
         let predictions = env.stream(source.clone())
         .map(move |mut x| {
-            if normalization==true{
-                //scale the features and the target
-                x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
-            }
 
+                        //////////////////////////////////////
             //SOLO PER TESTARE
             if layers[0].w.dim().1 == x.len()-1{
                 x.pop();
@@ -504,6 +505,13 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
             else{
                 x.pop();
             }
+            //////////////////////////////////////
+            /// 
+            if normalization==true{
+                //scale the features and the target
+                x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
+            }
+
 
             let mut x = Array2::from_shape_vec((1,x.len()), x).unwrap();
 
@@ -511,7 +519,17 @@ pub fn parallel_train_sgd(&mut self, method: String, learn_rate: f64, num_iters:
                 (_, x) = layer.forward(x);
             }
 
-            x.into_raw_vec()[0]
+            if task == "classification".to_string(){
+                //find argmax to get the class index
+                let (max_index, _) = x.iter().enumerate()
+                .max_by(|(_, &a), (_, &b)| a.partial_cmp(&b).unwrap()).unwrap();
+
+                max_index as f64
+            }
+
+            else{
+                x.into_raw_vec()[0]
+            }
             
         }).collect_vec();
         
@@ -631,10 +649,13 @@ pub fn score(&self, path_to_data: &String, normalization: bool, config: &Environ
         let score = env.stream(source)
                 
                 .map(move |mut x| {
-                
+                let mut mean_y = 0.;
                 if normalization==true{
                     //scale the features and the target
                     x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
+                }
+                else{
+                    mean_y = avg_y;
                 }
                     
                 let y = x.pop().unwrap();
@@ -646,13 +667,12 @@ pub fn score(&self, path_to_data: &String, normalization: bool, config: &Environ
     
                     (_, x) = layer.forward(x);
                 }
-
-                        //print!("\nAAA {:?}\n", x);                  
+              
                 // print!("\n{:},\n", x);
                 // print!("\n{:?},\n", avg_y);
                 // print!("\n{:?},\n", (y-avg_y).powi(2));
                 // print!("\n{:?},\n", (y-x.clone().into_raw_vec()[0]).powi(2));
-                [(y-x.into_raw_vec()[0]).powi(2),(y-avg_y).powi(2)]           
+                [(y-x.into_raw_vec()[0]).powi(2),(y-mean_y).powi(2)]           
             })
     
             .fold_assoc([0.,0.],
@@ -704,6 +724,7 @@ fn main() {
     //let training_set = "diabetes.csv".to_string();
     let training_set = "housing_numeric.csv".to_string();
     //let training_set = "forest_fire.csv".to_string();
+    //let training_set = "class_100k_10features_classification.csv".to_string();
     //let training_set: String = "data/class_1milion_4features_multiclass.csv".to_string();
     let mut model = Sequential::new(&[
         Dense::new(32, 5, Activation::Relu),
@@ -713,18 +734,18 @@ fn main() {
     ]);
     model.summary();
     //model.compile(Optimizer::SGD{lr: 0.01}, Loss::MSE);
-    model.compile(Optimizer::Adam { lr: 0.1, beta1: 0.9, beta2: 0.999, epsilon: 1e-8 }, Loss::MSE);
+    model.compile(Optimizer::Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, epsilon: 1e-8 }, Loss::MSE);
 
     let start = Instant::now();
 
-    model.parallel_train(3000, &training_set, 1., 1e-4 ,100, false, true, &config);
+    model.parallel_train(1000, &training_set, 1., 0. ,50, true, true, &config);
     
     let elapsed = start.elapsed();
 
-    let predict = model.predict(&training_set, false, &config);
+    let predict = model.predict(&training_set, true, &config);
     
-    let loss = model.compute_loss(&training_set, false, &config);
-    let score = model.score(&training_set, false, &config);  
+    let loss = model.compute_loss(&training_set, true, &config);
+    let score = model.score(&training_set, true, &config);  
 
     print!("Loss: {:?}\n", loss);
     print!("Score: {:?}\n", score);
