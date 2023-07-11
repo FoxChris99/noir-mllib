@@ -8,11 +8,10 @@ pub enum Optimizer {
         lr: f64,
         beta1: f64,
         beta2: f64,
-        epsilon: f64
     },
     None
 }
 
 pub trait Optimization {
-    fn optimize(&mut self, dw: Array2<f64>, db: Array2<f64>, optimizer: Optimizer);
+    fn optimize(&mut self, dw: Array2<f64>, db: Array2<f64>, optimizer: Optimizer, epoch: i32);
 }

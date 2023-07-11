@@ -7,26 +7,20 @@ pub enum Loss {
     None,
 }
 
-pub fn criteria(y_hat: Array2<f64>, y: Array2<f64>, loss_ty: Loss) -> (f64, Array2<f64>) {
+pub fn criteria(y_hat: &Array2<f64>, y: &Array2<f64>, loss_type: &Loss) -> (f64, Array2<f64>) {
     
     use Loss::*;
-    match loss_ty {
+    match loss_type {
 
         MSE => {
             let da = y_hat - y ;
-            //let loss = (0.5 * (y_hat - y).mapv(|v| v.powf(2.0))).mean().unwrap();
             let loss = 0.5* (da.map(|el| el.powi(2)).mean()).unwrap();
             (loss, da)
         },
 
-        // NLL => {
-        //     let da = -((y.clone() / y_hat.clone())-((1.0-y.clone())/(1.0-y_hat.clone())));
-        //     let loss = -(y.clone() * y_hat.mapv(|y| y.log(e)).reversed_axes() + (1.0 - y)*(1.0 - y_hat.mapv(|y| y.log(e)).reversed_axes())).mean().unwrap();
-        //     (loss, da)
-        // },
 
         CCE => {
-            let y = y.into_raw_vec()[0] as usize;
+            let y = y.clone().into_raw_vec()[0] as usize;
             let mut one_hot_y = Array2::<f64>::zeros((1, y_hat.dim().1));
             one_hot_y[(0,y)] = 1.;
             
