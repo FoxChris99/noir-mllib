@@ -1,6 +1,6 @@
 use noir::prelude::*;
 
-use std::{time::Instant};
+use std::time::Instant;
 
 use noir_ml::{sgd_regressor::{linear_sgd, linear_batch_gd}, adam_regressor::linear_adam, basic_stat::get_moments, sample::Sample};
 
@@ -69,7 +69,7 @@ impl RegularizedRegression {
 
             "ADAM" | "adam"  =>
             {    
-            let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, self.reg_type.as_str(), lambda);
+            let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, tol, n_iter_no_change, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
             weights = state.weights;
             },
 

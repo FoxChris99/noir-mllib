@@ -1,7 +1,6 @@
 //SISTEMARE: le prediction non sono ordinate
 use noir::prelude::*;
-use std::{time::Instant};
-
+use std::time::Instant;
 use noir_ml::{sample::Sample,basic_stat::get_moments,basic_stat::sigmoid, sgd_regressor::logistic_sgd, adam_regressor::logistic_adam};
 
 #[global_allocator]
@@ -10,7 +9,6 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 //Linear regression model
 #[derive(Clone, Debug)]
 struct LogisticRegression {
-    num_classes: usize,
     //all n+1 coeff
     coefficients: Vec<Vec<f64>>,
     //if the features have been normalized during training
@@ -21,18 +19,19 @@ struct LogisticRegression {
     train_std: Vec<f64>,
     //if the model has been trained at least one time
     fitted: bool,
+    num_classes: usize
 }
 
 
 impl LogisticRegression {
     fn new(num_classes: usize) -> LogisticRegression {
         LogisticRegression {
-            num_classes: num_classes,
             coefficients: Vec::new(),
             normalization: false,
             train_mean: Vec::<f64>::new(),
             train_std: Vec::<f64>::new(),
             fitted: false,
+            num_classes: num_classes
         }}
 }
 
@@ -48,20 +47,36 @@ impl LogisticRegression {
             self.normalization = true;
             (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
         }
+        
+        // let source2 = CsvSource::<Sample>::new(path_to_data).has_headers(true).delimiter(b',');
+        // let mut env2 = StreamEnvironment::new(config.clone());
+        // env2.spawn_remote_workers();
 
+        // let samples_per_class = env2.stream(source)
+        // .group_by_count(|x| x.0[x.0.len()-1] as usize).collect_vec().get().unwrap();
+
+        // env2.execute();
+        
+        // print!("\nNumber of samples per class:\n ");
+        // for (class, count) in samples_per_class.iter(){
+        //     print!("class {:?} : {:?}\n", class, count);
+        // }
+
+        // let num_classes = samples_per_class.len();
         let weights;
+        let num_classes = self.num_classes;
         //choose the iterative algorithm
         match  method.as_str(){
 
             "ADAM" | "adam"  =>
             {    
-            let state = logistic_adam(self.num_classes, weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = logistic_adam(num_classes, weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
             weights = state.weights;
             },
 
             "SGD" | "sgd" | _ => 
             {
-            let state = logistic_sgd(self.num_classes, weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
+            let state = logistic_sgd(num_classes, weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config);
             weights = state.weights;
             }
         }    
@@ -87,15 +102,13 @@ impl LogisticRegression {
         let train_mean = self.train_mean.clone();
         let train_std = self.train_std.clone();
         let coefficients = self.coefficients.clone();
-        let num_classes = self.num_classes.clone();
 
         let score = env.stream(source)
     
             .map(move |mut x| {
                 let dim = x.0.len();   
-                let mut y = vec![0;num_classes];
                 let class = x.0[dim-1] as usize; //class number  
-                y[class] = 1; //one hot encoding before normalization because it's a classification task
+                let num_classes = coefficients.len();
                 //scale the features
                 if normalization==true{
                     x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
@@ -149,13 +162,13 @@ impl LogisticRegression {
         let train_mean = self.train_mean.clone();
         let train_std = self.train_std.clone();
         let coefficients = self.coefficients.clone();
-        let num_classes = self.num_classes.clone();
 
         let prediction = env.stream(source)
     
             .map(move |mut x| {
                 let mut highest_prob = 0.;
                 let mut predicted_class:usize = 0;
+                let num_classes = coefficients.len();
                 x.0.push(1.); //push the intercept
                 if normalization==true{
                         x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
@@ -187,36 +200,39 @@ impl LogisticRegression {
 fn main() { 
     let (config, _args) = EnvironmentConfig::from_args();
 
-    let training_set = "wine_quality.csv".to_string();
-    let data_to_predict = "wine_quality.csv".to_string();
+    let training_set = "data/class_1milion_4features_multiclass.csv".to_string();
+    let data_to_predict = "data/class_1milion_4features_multiclass.csv".to_string();
 
-    let start = Instant::now();
-
-    let num_classes = 11;
+    let num_classes = 4;
     let mut model = LogisticRegression::new(num_classes);
     
     let method = "SGD".to_string(); //"ADAM".to_string()
     let num_iters = 100;
-    let learn_rate = 1e-2;
-    let data_fraction = 0.1;
-    let normalize = true;
+    let learn_rate = 1e-1;
+    let data_fraction = 1.;
+    let normalize = false;
     let weight_decay = false;
 
+    let start = Instant::now();
     //return the trained model
     model.fit(&training_set, method, num_iters, learn_rate, data_fraction, normalize, weight_decay, &config);
 
-    //compute the score over the training set
-    let score = model.score(&training_set, &config);
-
-    let predictions = model.predict(&data_to_predict, &config);
-
     let elapsed = start.elapsed();
 
-    //print!("\nCoefficients: {:?}\n", model.features_coef);
-    //print!("Intercept: {:?}\n", model.intercept);  
-
+    let start_score = Instant::now();
+    //compute the score over the training set
+    let score = model.score(&training_set, &config);
+    let elapsed_score = start_score.elapsed();
+    
+    let start_pred = Instant::now();
+    let predictions = model.predict(&data_to_predict, &config);
+    let elapsed_pred = start_pred.elapsed();
+    
+ 
     print!("\nScore: {:?}\n", score);
-    print!("\nPredictions: {:?}\n", predictions.iter().take(25).cloned().collect::<Vec<usize>>());
-    eprintln!("\nElapsed: {elapsed:?}");
+    print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<usize>>());
+    eprintln!("\nElapsed fit: {elapsed:?}");
+    eprintln!("\nElapsed score: {elapsed_score:?}"); 
+    eprintln!("\nElapsed pred: {elapsed_pred:?}");     
 
 }

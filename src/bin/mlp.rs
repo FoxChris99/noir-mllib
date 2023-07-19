@@ -1,4 +1,5 @@
 #![allow(unused)]
+use ndarray::ShapeBuilder;
 use noir::{prelude::*, config};
 use rand::Rng;
 use std::time::Instant;
@@ -263,7 +264,7 @@ impl Sequential<Dense> {
                                     Zip::from(&mut state.layers[i].b).and(&gradb).for_each(|b: &mut f64, &db| *b -= lr * db);
                                 }
                             }
-                            Optimizer::None => todo!(),
+                            Optimizer::None => (),
 
                         }   
                     }
@@ -376,7 +377,7 @@ impl Sequential<Dense> {
                 move |s, state| 
                 {
                     s
-                    .rich_filter_map({
+                    .shuffle().rich_filter_map({
                         let mut curr_loss = 0.;
                         let mut flag = 0;
                         let mut new_layers = state.get().layers.clone();
@@ -779,32 +780,32 @@ fn main() {
     //let training_set = "data/class_10milion_50features_multiclass.csv".to_string();
     //let training_set = "data/class_1milion_4features_multiclass.csv".to_string();
     //let training_set = "diabetes.csv".to_string();
-    let training_set = "housing_numeric.csv".to_string();
+    //let training_set = "housing_numeric.csv".to_string();
     //let training_set = "forest_fire.csv".to_string();
-    //let training_set = "class_100k_10features_classification.csv".to_string();
+    let training_set = "class_100k_10features_classification.csv".to_string();
     //let training_set: String = "data/class_1milion_4features_multiclass.csv".to_string();
     let mut model = Sequential::new(&[
-        Dense::new(32, 5, Activation::Relu),
+        Dense::new(32, 10, Activation::Relu),
         Dense::new(32, 32, Activation::Relu),
         Dense::new(32, 32, Activation::Relu),
-        Dense::new(1, 32, Activation::Linear),
+        Dense::new(8, 32, Activation::Softmax),
     ]);
     model.summary();
     //model.compile(Optimizer::SGD{lr: 0.01}, Loss::MSE);
-    model.compile(Optimizer::Adam { lr: 0.001, beta1: 0.9, beta2: 0.999}, Loss::MSE);
+    model.compile(Optimizer::Adam { lr: 0.01, beta1: 0.9, beta2: 0.999}, Loss::CCE);
 
     let start = Instant::now();
 
-    //model.fit(1000, &training_set, 1e-4 ,50, true, true, &config);
-    model.fit2(1000, &training_set, 0. ,50, true, true, &config);
+    model.fit(1000, &training_set, 0.,50, false, true, &config);
+    //model.fit2(1000, &training_set, 1e-4 ,50, true, true, &config);
    
     let elapsed = start.elapsed();
 
-    let predict = model.predict(&training_set, true, &config);
+    let predict = model.predict(&training_set, false, &config);
 
-    let loss = model.compute_loss(&training_set, true, &config);
+    let loss = model.compute_loss(&training_set, false, &config);
 
-    let score = model.score(&training_set, true, &config);  
+    let score = model.score(&training_set, false, &config);  
 
     print!("Loss: {:?}\n", loss);
     print!("Score: {:?}\n", score);

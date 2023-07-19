@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use noir::prelude::*;
 use std::{time::Instant, collections::HashMap};
 use serde::{Deserialize, Serialize};
@@ -701,43 +703,43 @@ fn main() {
     let training_set = "data/class_1milion_4features_multiclass.csv".to_string();
     //let data_to_predict = "data/class_1milion_4features_multiclass.csv".to_string();
 
-    let num_tree = 10;
+    let num_tree = 13;
     let min_samples_split = 20;
-    let max_features = 4;
-    let max_depth = 5;
+    let max_features = 2;
+    let max_depth = 6;
 
     let mut model = RandomForestClassifier::new(num_tree, max_features, max_depth, min_samples_split);
     
 
     let data_fraction = 0.5;
-    //let split_method = "median".to_string();
-    let dynamic_split_method = "uniform".to_string();
+    //let split_method = "expensive".to_string(); //"median" //"mean"
+    let dynamic_split_method = "uniform".to_string(); //"k-tile"
     
     let start = Instant::now();
     //return the trained model
     //model.fit(&training_set, data_fraction, split_method, &config);
 
-    model.dynamic_fit(&training_set, data_fraction, dynamic_split_method, 10, &config);
+    model.dynamic_fit(&training_set, data_fraction, dynamic_split_method, 1000, &config);
 
     let elapsed = start.elapsed();
 
-    /*
-    let start_score = Instant::now();
-    //compute the score over the training set
-    let score = model.score(&training_set, &config);
-    let elapsed_score = start_score.elapsed();
     
-    let start_pred = Instant::now();
-    let predictions = model.predict(&data_to_predict, &config);
-    let elapsed_pred = start_pred.elapsed();
-    */
+    // let start_score = Instant::now();
+    // //compute the score over the training set
+    // let score = model.score(&training_set, &config);
+    // let elapsed_score = start_score.elapsed();
+    
+    // let start_pred = Instant::now();
+    // let predictions = model.predict(&data_to_predict, &config);
+    // let elapsed_pred = start_pred.elapsed();
+    
 
-    //print!("\nScore: {:?}\n", score);
-    //print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<usize>>());
+    // print!("\nScore: {:?}\n", score);
+    // print!("\nPredictions: {:?}\n", predictions.iter().take(5).cloned().collect::<Vec<usize>>());
     //eprintln!("{:#?}",model.forest);
     eprintln!("\nElapsed fit: {elapsed:?}");
-    //eprintln!("\nElapsed score: {elapsed_score:?}"); 
-    //eprintln!("\nElapsed pred: {elapsed_pred:?}");     
+    // eprintln!("\nElapsed score: {elapsed_score:?}"); 
+    // eprintln!("\nElapsed pred: {elapsed_pred:?}");     
 
 
 }

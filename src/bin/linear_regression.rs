@@ -59,14 +59,14 @@ impl LinearRegression {
 
             "ADAM" | "adam"  =>
             {    
-            let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
-            weights = state.weights;
+            let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, tol, n_iter_no_change, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
+            weights = state.best_weights;
             },
 
             "GD" | "gd" | "mini-batch"|"batch_gd" => 
             {
             let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, tol, n_iter_no_change, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
-            weights = state.weights;
+            weights = state.best_weights;
             }
 
             "SGD" | "sgd" | _ => 
@@ -213,8 +213,9 @@ impl LinearRegression {
 
 fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
-    let training_set = "data/class_10milion_50features_multiclass.csv".to_string();
-    let training_set = "D:/regr_100milion_7features.csv".to_string();
+    //let training_set = "data/class_10milion_50features_multiclass.csv".to_string();
+    let training_set = "data/class_1milion_4features_multiclass.csv".to_string();
+    //let training_set = "diabetes.csv".to_string();
     let data_to_predict = "data/class_1milion_4features_multiclass.csv".to_string();
  
     let mut model = LinearRegression::new();
@@ -229,7 +230,7 @@ fn main() {
     let tol = 0.;
     let n_iter_no_change = 5;
 
-    let normalize = false;
+    let normalize = true;
 
     let start = Instant::now();
     //return the trained model
