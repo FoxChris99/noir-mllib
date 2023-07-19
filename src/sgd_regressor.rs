@@ -24,6 +24,8 @@ pub struct StateSGD {
     best_loss: f64,
     //n_iter_no_change
     n_iter_early_stopping: usize,
+    //best coefficients
+    pub best_weights: Vec<f64>,
 }
 
 impl StateSGD {
@@ -33,7 +35,8 @@ impl StateSGD {
             global_grad: Vec::<f64>::new(),
             epoch : 0,
             best_loss: f64::MAX,
-            n_iter_early_stopping : 0
+            n_iter_early_stopping : 0,
+            best_weights:  Vec::<f64>::new(),
         }}}
 
 
@@ -54,6 +57,7 @@ pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, 
         let source = CsvSource::<Sample>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
         let mut env = StreamEnvironment::new(config.clone());
         env.spawn_remote_workers();
+        
         let fit = env.stream(source.clone())
         .replay(
             num_iters,
@@ -152,6 +156,7 @@ pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, 
 
                 if state.best_loss>loss{
                     state.best_loss = loss;
+                    state.best_weights = state.weights.clone();
                 }
                 }
                 //update iterations
@@ -166,7 +171,7 @@ pub fn linear_batch_gd(weight_decay: bool, learn_rate: f64, data_fraction: f64, 
 
                 //loop condition
                 if state.n_iter_early_stopping >= n_iter_no_change {
-                    print!("Early Stopping: {:?}", state.epoch);
+                    print!("Early Stopping at iter: {:?}", state.epoch);
                 }
 
                 state.epoch < num_iters && state.n_iter_early_stopping < n_iter_no_change 

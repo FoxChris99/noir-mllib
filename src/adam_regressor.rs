@@ -19,7 +19,14 @@ pub struct StateAdam {
     //second gradient moment
     v: Vec<f64>, 
     //iterations over the dataset
-    epoch: usize,}
+    epoch: usize,
+    //best square loss for early stopping
+    best_loss: f64,
+    //n_iter_no_change
+    n_iter_early_stopping: usize,
+    //best coefficients
+    pub best_weights: Vec<f64>,
+}
 
 impl StateAdam {
     pub fn new() -> StateAdam {
@@ -29,11 +36,14 @@ impl StateAdam {
             m: Vec::<f64>::new(),
             v: Vec::<f64>::new(),
             epoch : 0,
+            best_loss: f64::MAX,
+            n_iter_early_stopping : 0,
+            best_weights:  Vec::<f64>::new(),
         }}}
 
 
 pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_iters: usize, 
-    path_to_data: &String, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig, regularization: &str, lambda: f64) 
+    path_to_data: &String, tol: f64, n_iter_no_change:usize, normalization: bool, train_mean: Vec<f64>, train_std: Vec<f64>, config: &EnvironmentConfig, regularization: &str, lambda: f64) 
     -> StateAdam {
 
         let reg_flag;
@@ -50,6 +60,7 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_
         let beta1 = 0.9;
         let beta2 = 0.999;
 
+
         let fit = env.stream(source.clone())
             .replay(
             num_iters,
@@ -62,10 +73,15 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_
                 //each replica filter a number of samples equal to batch size and
                 //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
                 .rich_filter_map({
+                    let mut flag_at_least_one = 0;
                     move |mut x|{
                         let dim = x.0.len();
-                        //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
-                        if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) {
+                        //each iteration just a fraction of data is considered
+                        if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) || flag_at_least_one == state.get().epoch{
+                            //make sure at each iteration at least a sample is passed forward
+                            if flag_at_least_one == state.get().epoch{
+                                flag_at_least_one += 1;
+                            }
                             if normalization==true{
                                 //scale the features and the target
                                 x.0 = x.0.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect();
@@ -84,7 +100,7 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_
                             let prediction: f64 = x.0.iter().zip(current_weights.iter()).map(|(xi, wi)| xi * wi).sum();
                             let error = prediction - y;
                             let sample_grad: Vec<f64> = x.0.iter().map(|xi| xi * error).collect();                            
-                            let grad; 
+                            let mut grad; 
                             match reg_flag{
                                 //lasso
                                 1 => grad = Sample(current_weights.iter().zip(sample_grad.iter()).map(|(wi,gi)| gi + if *wi>=0. {lambda} else {-lambda}).collect()),
@@ -95,8 +111,10 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_
                                 //no regularization
                                 _ => grad = Sample(sample_grad),
                             }
-                            
-                            Some(grad)     
+                            //early stopping: we need the loss
+                            if tol!=0.{
+                                grad.0.push(error.powi(2));} //push the square loss for early stopping
+                                Some(grad)   
                             }
                         else {None}}})
                 //the average of the gradients is computed and forwarded as a single value
@@ -125,6 +143,25 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_
                     state.v = vec![0.;dim];
                     state.weights = vec![0.;dim];
                 }
+
+                if tol!=0.{
+                    let loss = state.global_grad.pop().unwrap();
+                    //initialize
+    
+                    //early stopping if for tot iters the loss doesn't improve
+                    if loss > state.best_loss - tol && tol!=0.{
+                        state.n_iter_early_stopping+=1;
+                    }
+                    else{
+                        state.n_iter_early_stopping=0;
+                    }
+    
+                    if state.best_loss>loss{
+                        state.best_loss = loss;
+                        state.best_weights = state.weights.clone();
+                    }
+                }
+
                 //update iterations
                 state.epoch +=1;
                 //update the moments
@@ -139,11 +176,15 @@ pub fn linear_adam(weight_decay: bool, learn_rate: f64, data_fraction: f64, num_
                     state.weights = state.weights.iter().map(|wi| wi -  learn_rate * 0.002 * wi).collect();
                 }
                 //tolerance=gradient's L2 norm for the stop condition
-                let tol: f64 = adam.iter().map(|v| v*v).sum();
+                //let tol: f64 = adam.iter().map(|v| v*v).sum();
                 //reset the global gradient for the next iteration
                 state.global_grad = vec![0.;adam.len()];
                 //loop condition
-                state.epoch < num_iters && tol.sqrt() > 1e-4
+                if state.n_iter_early_stopping >= n_iter_no_change {
+                    print!("Early Stopping at iter: {:?}", state.epoch);
+                }
+
+                state.epoch < num_iters && state.n_iter_early_stopping < n_iter_no_change 
             },
 
         )
@@ -209,10 +250,15 @@ pub fn logistic_adam(num_classes: usize, weight_decay: bool, learn_rate: f64, da
                         //each replica filter a number of samples equal to batch size and
                         //for each sample computes the gradient of the mse loss (a vector of length: n_features+1)
                         .rich_filter_map({
+                            let mut flag_at_least_one = 0;
                             move |mut x|{
                                 let dim = x.0.len();
-                                //at first iter (epoch=0) count goes from 0 to batch_size; at epoch=1 from batchsize to 2*batch_size...
-                                if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) {
+                                //each iteration just a fraction of data is considered
+                                if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction) || flag_at_least_one == state.get().epoch{
+                                    //make sure at each iteration at least a sample is passed forward
+                                    if flag_at_least_one == state.get().epoch{
+                                        flag_at_least_one += 1;
+                                    }
                                     //the target is in the last element of each sample, y one hot encoding
                                     let mut y = vec![0;num_classes];
                                     y[x.0[dim-1] as usize] = 1; //assigned before normalization because it's a classification task
