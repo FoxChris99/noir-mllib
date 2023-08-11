@@ -790,9 +790,17 @@ fn main() {
         Dense::new(32, 32, Activation::Relu),
         Dense::new(8, 32, Activation::Softmax),
     ]);
+
+    // let mut model = Sequential::new(&[
+    //     Dense::new(32, 10, Activation::Relu),
+    //     Dense::new(32, 32, Activation::Relu),
+    //     Dense::new(32, 32, Activation::Relu),
+    //     Dense::new(1, 32, Activation::Linear),
+    // ]);
+
     model.summary();
     //model.compile(Optimizer::SGD{lr: 0.01}, Loss::MSE);
-    model.compile(Optimizer::Adam { lr: 0.01, beta1: 0.9, beta2: 0.999}, Loss::CCE);
+    model.compile(Optimizer::Adam { lr: 0.01, beta1: 0.9, beta2: 0.999}, Loss::CCE);//MSE
 
     let start = Instant::now();
 
