@@ -11,13 +11,69 @@ use noir::prelude::*;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+pub fn kmeans(
+    num_centroids: usize,
+    num_iters: usize,
+    path: &String,
+    config: &EnvironmentConfig,
+) -> StreamOutput<Vec<State>> {
+    let mut env = StreamEnvironment::new(config.clone());
+    env.spawn_remote_workers();
+
+    let centroids = read_centroids(path, num_centroids);
+    assert_eq!(centroids.len(), num_centroids);
+    let initial_state = State::new(centroids);
+
+    let source = CsvSource::<Point>::new(path).has_headers(false);
+    let result = env
+        .stream(source)
+        .replay(
+            num_iters,
+            initial_state,
+            |s, state| {
+                s.map(move |point| {
+                    (
+                        point.clone(),
+                        select_nearest(&point, &state.get().old_centroids),
+                    )
+                })
+                .group_by_avg(|(_p, c)| c.clone(), |(p, _c)| p.clone())
+                .drop_key()
+            },
+            |update: &mut Vec<Point>, p| update.push(p),
+            move |state, mut update| {
+                state.centroids.append(&mut update);
+            },
+            |state| {
+                let mut changed: bool = false;
+                state.iter_count += 1;
+                state.centroids.sort_unstable();
+                state.old_centroids.sort_unstable();
+                if state.centroids != state.old_centroids {
+                    changed = true;
+                    state.old_centroids.clear();
+                    state.old_centroids.append(&mut state.centroids);
+                }
+                changed
+            },
+        )
+        .collect_vec();
+
+    let start = Instant::now();
+    env.execute();
+    let elapsed = start.elapsed();
+    eprintln!("Elapsed: {elapsed:?}");
+
+    result
+}
+
 #[derive(Default, Serialize, Deserialize, Clone, Debug)]
-struct Point {
+pub struct Point {
     coords: Vec<f64>,
 }
 
 impl Point {
-    fn distance_to(&self, other: &Point) -> f64 {
+    pub fn distance_to(&self, other: &Point) -> f64 {
         self.coords
             .iter()
             .zip(other.coords.iter())
@@ -89,7 +145,7 @@ impl Div<f64> for Point {
 }
 
 //Take first n points in csv file as the starting centroids
-fn read_centroids(filename: &str, n: usize) -> Vec<Point> {
+pub fn read_centroids(filename: &str, n: usize) -> Vec<Point> {
     let file = File::open(filename).unwrap();
     csv::ReaderBuilder::new()
         .has_headers(false)
@@ -101,7 +157,7 @@ fn read_centroids(filename: &str, n: usize) -> Vec<Point> {
 }
 
 //Find the Point in a vector which has the lowest distance from another specified Point
-fn select_nearest(point: &Point, old_centroids: &Vec<Point>) -> Point {
+pub fn select_nearest(point: &Point, old_centroids: &Vec<Point>) -> Point {
     let res: Point;
     res = old_centroids
         .iter()
@@ -114,14 +170,14 @@ fn select_nearest(point: &Point, old_centroids: &Vec<Point>) -> Point {
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
-struct State {
+pub struct State {
     iter_count: i64,
     old_centroids: Vec<Point>,
     centroids: Vec<Point>,
 }
 
 impl State {
-    fn new(old_centroids: Vec<Point>) -> State {
+    pub fn new(old_centroids: Vec<Point>) -> State {
         State {
             old_centroids,
             ..Default::default()
@@ -138,57 +194,12 @@ fn main() {
     let num_iters: usize = args[1].parse().expect("Invalid number of iterations");
     let path = &args[2];
 
-    let mut env = StreamEnvironment::new(config);
+    let res = kmeans(num_centroids, num_iters, path, &config);
 
-    env.spawn_remote_workers();
-
-    let centroids = read_centroids(path, num_centroids);
-    assert_eq!(centroids.len(), num_centroids);
-    let initial_state = State::new(centroids);
-
-    let source = CsvSource::<Point>::new(path).has_headers(false);
-    let res = env
-        .stream(source)
-        .replay(
-            num_iters,
-            initial_state,
-            |s, state| {
-                s.map(move |point| {
-                    (
-                        point.clone(),
-                        select_nearest(&point, &state.get().old_centroids),
-                    )
-                })
-                .group_by_avg(|(_p, c)| c.clone(), |(p, _c)| p.clone())
-                .drop_key()
-            },
-            |update: &mut Vec<Point>, p| update.push(p),
-            move |state, mut update| {
-                state.centroids.append(&mut update);
-            },
-            |state| {
-                let mut changed: bool = false;
-                state.iter_count += 1;
-                state.centroids.sort_unstable();
-                state.old_centroids.sort_unstable();
-                if state.centroids != state.old_centroids {
-                    changed = true;
-                    state.old_centroids.clear();
-                    state.old_centroids.append(&mut state.centroids);
-                }
-                changed
-            },
-        )
-        .collect_vec();
-
-    let start = Instant::now();
-    env.execute();
-    let elapsed = start.elapsed();
     if let Some(res) = res.get() {
         let state = &res[0];
         eprintln!("Iterations: {}/{}", state.iter_count, num_iters);
         eprintln!("Centroids: {:?}", state.centroids.len());
         eprintln!("Old Centroids: {:?}", state.old_centroids.len());
     }
-    eprintln!("Elapsed: {elapsed:?}");
 }
