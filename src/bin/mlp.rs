@@ -99,6 +99,7 @@ impl Sequential<Dense> {
             let loss = self.loss.clone();
             let optimizer = self.optimizer.clone();
 
+            //normalization preparation step and task definition
             if normalization==true{
                 (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
                 match loss {
@@ -130,25 +131,34 @@ impl Sequential<Dense> {
             let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
             let mut env = StreamEnvironment::new(config.clone());
             env.spawn_remote_workers();
+
             let fit = env.stream(source.clone())
             .map(move |mut x| {
+                
+                //initialize the target
                 let mut y = Array2::from_elem((1,1), 0.);
                 if normalization==true{
                     if task == "classification".to_string(){
-                        //first pop the target class
+                        //first pop the target class (the target class can't be normalized)
                         y = Array2::from_elem((1,1), x.pop().unwrap());
                         x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
                     }
                     else {
+                        //in regression task normalize both features and target
                         x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
                         y = Array2::from_elem((1,1), x.pop().unwrap());}
 
                     }
                 else{
+                    //no normalization
+                    //the target is in the last element of the sample vector
                     y = Array2::from_elem((1,1), x.pop().unwrap());
                 }
+                //a vector of tuple of array2 is forwarded because in the replay we need to have as stream element 
+                //the vector of the weights and biases of the network
                 NNvector(vec![(Array2::from_shape_vec((1,x.len()),x).unwrap(),y)])
             })
+
             .replay(
                 num_iters,
                 StateNN::new(&self.layers),
@@ -158,24 +168,29 @@ impl Sequential<Dense> {
                     s
                     .map(
     
-                        move |mut v|{
+                        move |v|{
 
-                            
+                            //initialization
                             let mut forward_weights: Vec<(Array2<f64>,Array2<f64>)> = Vec::new();
-                            let mut x = &v.0[0].0;
+                            //features
+                            let mut x = v.0[0].0.clone();
+                            //target
                             let mut y = &v.0[0].1;
 
-                            let mut z_cache = vec![];
-                            let mut a_cache = vec![];
+                            //z is the linear output of a layer
                             let mut z: Array2<f64>;
-                            let mut a = x.clone();
-
-                            a_cache.push(a.clone());
+                            let mut z_cache = vec![];
+                            //a is the application of an activation function to z
+                            //let mut a = x.clone();
+                            let mut a_cache = vec![];
+                            
+                            //a_cache.push(a.clone());
+                            a_cache.push(x.clone());
 
                             for layer in state.get().layers.iter() {
-                                (z, a) = layer.forward(a);
+                                (z, x) = layer.forward(x);
                                 z_cache.push(z.clone());
-                                a_cache.push(a.clone());
+                                a_cache.push(x.clone());
                             }
                             // loss computation
                             let y_hat = a_cache.pop().unwrap();  
@@ -197,7 +212,7 @@ impl Sequential<Dense> {
                         }
                             
                 )
-                    //the average of the gradients is computed and forwarded as a single value
+                    //the average of the gradients for each weights are computed
                     .group_by_avg(|_x| true, |x| x.clone()).drop_key()
                 },
     
@@ -214,6 +229,7 @@ impl Sequential<Dense> {
                         state.epoch +=1;
                         state.loss = local_dw.pop().unwrap().0.into_raw_vec()[0];
                         
+                        //save the best network
                         if state.best_loss>state.loss{
                             state.best_network = state.layers.clone();
                         }
@@ -223,6 +239,9 @@ impl Sequential<Dense> {
                                 for (i,layer) in local_dw.iter().enumerate(){
                                     Zip::from(&mut state.layers[i].w).and(&layer.0).for_each(|w, &dw| *w -= lr * dw);
                                     Zip::from(&mut state.layers[i].b).and(&layer.1).for_each(|b, &db| *b -= lr * db);
+                                    //state.layers[i].w = state.layers[i].w.clone() - lr*layer.0.clone();
+                                    //state.layers[i].b = state.layers[i].b.clone() - lr*layer.1.clone();
+
                                 }
                             }
                             Optimizer::Adam { lr, beta1, beta2 } => {
@@ -289,7 +308,226 @@ impl Sequential<Dense> {
     }
 
 
-    /* 
+    pub fn fit_sgd(&mut self, num_iters: usize, 
+        path_to_data: &String, data_fraction: f64, tol: f64, n_iter_no_change:usize, normalization: bool, verbose: bool, config: &EnvironmentConfig) 
+         {
+    
+            let loss = self.loss.clone();
+            let optimizer = self.optimizer.clone();
+
+            //normalization preparation step and task definition
+            if normalization==true{
+                (self.train_mean, self.train_std) = get_moments(&config, &path_to_data);
+                match loss {
+                    Loss::CCE => {
+                        self.train_mean = self.train_mean.iter().cloned().take(self.train_mean.len()-1).collect();
+                        self.train_std = self.train_std.iter().cloned().take(self.train_std.len()-1).collect();
+                        self.task = "classification".to_string();
+                    },
+                    _ =>{
+                        self.task = "regression".to_string();
+                    }
+            }}
+
+            else{
+                match loss {
+                    Loss::CCE => {
+                        self.task = "classification".to_string();
+                    },
+                    _ =>{
+                        self.task = "regression".to_string();
+                    }
+                }
+            }
+            
+            let task = self.task.clone();
+            let train_mean = self.train_mean.clone();
+            let train_std = self.train_std.clone();
+    
+            let source = CsvSource::<Vec<f64>>::new(path_to_data.clone()).has_headers(true).delimiter(b',');
+            let mut env = StreamEnvironment::new(config.clone());
+            env.spawn_remote_workers();
+
+            let fit = env.stream(source.clone())
+            .map(move |mut x| {
+                
+                //initialize the target
+                let mut y = Array2::from_elem((1,1), 0.);
+                if normalization==true{
+                    if task == "classification".to_string(){
+                        //first pop the target class (the target class can't be normalized)
+                        y = Array2::from_elem((1,1), x.pop().unwrap());
+                        x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
+                    }
+                    else {
+                        //in regression task normalize both features and target
+                        x = x.iter().zip(train_mean.iter().zip(train_std.iter())).map(|(xi,(m,s))| (xi-m)/s).collect::<Vec::<f64>>();
+                        y = Array2::from_elem((1,1), x.pop().unwrap());}
+
+                    }
+                else{
+                    //no normalization
+                    //the target is in the last element of the sample vector
+                    y = Array2::from_elem((1,1), x.pop().unwrap());
+                }
+                //a vector of tuple of array2 is forwarded because in the replay we need to have as stream element 
+                //the vector of the weights and biases of the network
+                NNvector(vec![(Array2::from_shape_vec((1,x.len()),x).unwrap(),y)])
+            })
+
+            .replay(
+                num_iters,
+                StateNN::new(&self.layers),
+    
+                move |s, state| 
+                {
+                    s
+                    .filter_map(
+    
+                        move |v|{
+
+                            if rand::thread_rng().gen::<f64>() > (1.0 - data_fraction){
+                            //initialization
+                            let mut forward_weights: Vec<(Array2<f64>,Array2<f64>)> = Vec::new();
+                            //features
+                            let mut x = v.0[0].0.clone();
+                            //target
+                            let mut y = &v.0[0].1;
+
+                            //z is the linear output of a layer
+                            let mut z: Array2<f64>;
+                            let mut z_cache = vec![];
+                            //a is the application of an activation function to z
+                            //let mut a = x.clone();
+                            let mut a_cache = vec![];
+                            
+                            //a_cache.push(a.clone());
+                            a_cache.push(x.clone());
+
+                            for layer in state.get().layers.iter() {
+                                (z, x) = layer.forward(x);
+                                z_cache.push(z.clone());
+                                a_cache.push(x.clone());
+                            }
+                            // loss computation
+                            let y_hat = a_cache.pop().unwrap();  
+
+                            let (loss, mut da) = criteria(&y_hat, &y, &loss);
+                            
+                            // back propagation
+                            let mut dw: Array2<f64>;
+                            let mut db: Array2<f64>;
+                
+                            for ((layer, z), a) in (state.get().layers.iter()).rev().zip((z_cache.iter()).rev()).zip((a_cache.iter()).rev()) {
+                                (dw, db, da) = layer.backward(z, a, da);
+                                forward_weights.insert(0,(dw.clone(), db.clone()));
+                            }                               
+
+                            //push loss to compute the global loss each epoch and a 0 to make the tuple
+                            forward_weights.push((Array2::from_elem((1,1), loss),Array2::from_elem((1,1), 0.)));
+                            Some(NNvector(forward_weights))
+                        }
+                        else{
+                            None
+                        }}
+                            
+                )
+                    //the average of the gradients for each weights are computed
+                    .group_by_avg(|_x| true, |x| x.clone()).drop_key()
+                },
+    
+                move |local_dw: &mut Vec<(Array2<f64>,Array2<f64>)>, dweights| 
+                {   
+                    if dweights.0.len()!=0{
+                    *local_dw = dweights.0;}
+                },
+    
+                move |state, mut local_dw| 
+                {   
+                    //we don't want to read empty replica gradient 
+                    if local_dw.len()!=0{
+                        state.epoch +=1;
+                        state.loss = local_dw.pop().unwrap().0.into_raw_vec()[0];
+                        
+                        //save the best network
+                        if state.best_loss>state.loss{
+                            state.best_network = state.layers.clone();
+                        }
+
+                        match optimizer {
+                            Optimizer::SGD { lr } => {
+                                for (i,layer) in local_dw.iter().enumerate(){
+                                    Zip::from(&mut state.layers[i].w).and(&layer.0).for_each(|w, &dw| *w -= lr * dw);
+                                    Zip::from(&mut state.layers[i].b).and(&layer.1).for_each(|b, &db| *b -= lr * db);
+                                    //state.layers[i].w = state.layers[i].w.clone() - lr*layer.0.clone();
+                                    //state.layers[i].b = state.layers[i].b.clone() - lr*layer.1.clone();
+
+                                }
+                            }
+                            Optimizer::Adam { lr, beta1, beta2 } => {
+                                for (i,layer) in local_dw.iter().enumerate(){
+                                    Zip::from(&mut state.layers[i].m).and(&layer.0).for_each(|m, &dw| *m = *m * beta1 + (1. - beta1) * dw);
+                                    Zip::from(&mut state.layers[i].v).and(&layer.0).for_each(|v, &dw| *v = *v * beta2 + (1. - beta2) * dw.powi(2));
+                                    Zip::from(&mut state.layers[i].m_b).and(&layer.1).for_each(|m, &db| *m = *m * beta1 + (1. - beta1) * db);
+                                    Zip::from(&mut state.layers[i].v_b).and(&layer.1).for_each(|v, &db| *v = *v * beta2 + (1. - beta2) * db.powi(2));
+                                    let m_hat = &state.layers[i].m/(1. - beta1.powi(state.epoch as i32));
+                                    let v_hat = &state.layers[i].v/(1. - beta2.powi(state.epoch as i32));
+                                    let mb_hat = &state.layers[i].m_b/(1. - beta1.powi(state.epoch as i32));
+                                    let vb_hat = &state.layers[i].v_b/(1. - beta2.powi(state.epoch as i32));
+                                    let gradw: Array2<f64> = m_hat / (v_hat.mapv(|v| v.sqrt()+ 1e-8));
+                                    let gradb: Array2<f64> = mb_hat / (vb_hat.mapv(|v| v.sqrt()+ 1e-8));
+                                    Zip::from(&mut state.layers[i].w).and(&gradw).for_each(|w: &mut f64, &dw| *w -= lr * dw);
+                                    Zip::from(&mut state.layers[i].b).and(&gradb).for_each(|b: &mut f64, &db| *b -= lr * db);
+                                }
+                            }
+                            Optimizer::None => (),
+
+                        }   
+                    }
+                },
+    
+                move|state| 
+                {   
+                    //update iterations
+                    if verbose && state.epoch>0{
+                        print!("Iter: {:?}/{:?} --- Loss: {:?}\n", state.epoch, num_iters, state.loss);}
+
+
+                    if state.epoch != 0
+                    {    
+                    //early stopping if for n iters the loss doesn't improve
+                    if state.loss > state.best_loss - tol && tol!=0.{
+                        state.n_iter_early_stopping+=1;
+                        
+                    }
+                    else{
+                        state.n_iter_early_stopping=0;
+                    }
+
+                    if state.best_loss>state.loss{
+                        state.best_loss = state.loss;
+                    }
+
+                    if state.n_iter_early_stopping >= n_iter_no_change {
+                            print!("\nEarly Stopping at iter: {:?}\n", state.epoch);
+                    }
+                    }
+
+                    state.epoch < num_iters + 1 && state.n_iter_early_stopping < n_iter_no_change
+                },
+    
+            )
+            .collect_vec();
+    
+        env.execute();
+    
+        let state = fit.get().unwrap()[0].clone();
+
+        self.layers = state.best_network;
+
+    }
+
+   
     pub fn fit2(&mut self, num_iters: usize, 
         path_to_data: &String, tol: f64, n_iter_no_change:usize, normalization: bool, verbose: bool, config: &EnvironmentConfig) 
          {
@@ -354,7 +592,8 @@ impl Sequential<Dense> {
                 move |s, state| 
                 {
                     s
-                    .shuffle().rich_filter_map({
+                    .shuffle()
+                    .rich_filter_map({
                         let mut curr_loss = 0.;
                         let mut flag = 0;
                         let mut new_layers = state.get().layers.clone();
@@ -448,7 +687,7 @@ impl Sequential<Dense> {
                             }
                             }
                 })
-                    //the average of the gradients is computed and forwarded as a single value
+
                     .group_by_avg(|_x| true, |x| x.clone()).drop_key()
                 },
     
@@ -460,7 +699,7 @@ impl Sequential<Dense> {
     
                 move |state, mut local_w| 
                 {   
-                    //we don't want to read empty replica gradient (this should be solved by using the max_parallelism(1) above)
+
                     if local_w.len()!=0{
                                             
                         state.loss = local_w.pop().unwrap().0.into_raw_vec()[0];
@@ -517,7 +756,7 @@ impl Sequential<Dense> {
         self.layers = state.best_network;
 
     }
-*/
+
 
 
     pub fn predict(&self, path_to_data: &String, normalization: bool, config: &EnvironmentConfig) -> Vec<f64> {
@@ -728,7 +967,9 @@ pub fn score(&self, path_to_data: &String, normalization: bool, config: &Environ
 fn main() {
     let (config, _args) = EnvironmentConfig::from_args();
 
-    let training_set = "class_100k_10features_classification.csv".to_string();
+   //let training_set = "class_100k_classification_noise.csv".to_string();
+   //let training_set = "data/class_1milion_50features_multiclass.csv".to_string();
+   let training_set = "class_100k_10features_classification.csv".to_string();
 
     let mut model = Sequential::new(&[
         Dense::new(32, 10, Activation::Relu),
@@ -744,13 +985,28 @@ fn main() {
     //     Dense::new(1, 32, Activation::Linear),
     // ]);
 
+    //     let mut model = Sequential::new(&[
+    //     Dense::new(132, 10, Activation::Relu),
+    //     Dense::new(132, 132, Activation::Relu),
+    //     Dense::new(132, 132, Activation::Relu),
+    //     Dense::new(1, 132, Activation::Linear),
+    // ]);
+
+    // let mut model = Sequential::new(&[
+    //     Dense::new(32, 10, Activation::Relu),
+    //     Dense::new(1, 32, Activation::Linear),
+    // ]);
+
+
     model.summary();
-    //model.compile(Optimizer::SGD{lr: 0.01}, Loss::CCE);
+    //model.compile(Optimizer::SGD{lr: 0.01}, Loss::MSE);
     model.compile(Optimizer::Adam { lr: 0.01, beta1: 0.9, beta2: 0.999}, Loss::CCE);//MSE
 
     let start = Instant::now();
-
-    model.fit(100, &training_set, 0.,20, false, false, &config);
+    
+     model.fit(100, &training_set, 0.,20, false, false, &config);
+    //model.fit_sgd(5000, &training_set, 0.2, 1e-5,200, false, false, &config);
+    //model.fit2(100, &training_set, 0.,100, false, false, &config);
 
     let elapsed = start.elapsed();
 
