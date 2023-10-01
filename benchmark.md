@@ -111,7 +111,7 @@
 
 
 +------------------------+------------------------+----------------+----------------+
-|     kmeans             |kmeans                  |  kmeans        |   data loading |
+|     naive bayes        | naive bayes            |  naive bayes   |   data loading |
 +------------------------+------------------------+----------------+----------------+
 | Dataset                | Noir 16 local replicas | sklearn        |    pandas      |
 | n° rows                |                        | Python         |    python      |
