@@ -308,7 +308,7 @@ impl Sequential<Dense> {
     }
 
 
-    pub fn fit_sgd(&mut self, num_iters: usize, 
+    pub fn fit_batch(&mut self, num_iters: usize, 
         path_to_data: &String, data_fraction: f64, tol: f64, n_iter_no_change:usize, normalization: bool, verbose: bool, config: &EnvironmentConfig) 
          {
     
@@ -527,8 +527,10 @@ impl Sequential<Dense> {
 
     }
 
+
+  
    
-    pub fn fit2(&mut self, num_iters: usize, 
+    pub fn fit_decentralized(&mut self, num_iters: usize, 
         path_to_data: &String, tol: f64, n_iter_no_change:usize, normalization: bool, verbose: bool, config: &EnvironmentConfig) 
          {
     
@@ -676,7 +678,7 @@ impl Sequential<Dense> {
 
                                     count2 = 0;
                                     flag = 0;
-
+                                    
                                     Some(NNvector(forward_weights.clone()))
                                 }
 
@@ -756,7 +758,6 @@ impl Sequential<Dense> {
         self.layers = state.best_network;
 
     }
-
 
 
     pub fn predict(&self, path_to_data: &String, normalization: bool, config: &EnvironmentConfig) -> Vec<f64> {
@@ -971,29 +972,23 @@ fn main() {
    //let training_set = "data/class_1milion_50features_multiclass.csv".to_string();
    let training_set = "class_100k_10features_classification.csv".to_string();
 
+    // let mut model = Sequential::new(&[
+    //     Dense::new(32, 10, Activation::Relu),
+    //     Dense::new(32, 32, Activation::Relu),
+    //     Dense::new(32, 32, Activation::Relu),
+    //     Dense::new(8, 32, Activation::Softmax),
+    // ]);
+
     let mut model = Sequential::new(&[
-        Dense::new(32, 10, Activation::Relu),
-        Dense::new(32, 32, Activation::Relu),
-        Dense::new(32, 32, Activation::Relu),
-        Dense::new(8, 32, Activation::Softmax),
+        Dense::new(16, 10, Activation::Relu),
+        Dense::new(16, 16, Activation::Relu),
+        Dense::new(8, 16, Activation::Softmax),
     ]);
 
     // let mut model = Sequential::new(&[
     //     Dense::new(32, 10, Activation::Relu),
     //     Dense::new(32, 32, Activation::Relu),
     //     Dense::new(32, 32, Activation::Relu),
-    //     Dense::new(1, 32, Activation::Linear),
-    // ]);
-
-    //     let mut model = Sequential::new(&[
-    //     Dense::new(132, 10, Activation::Relu),
-    //     Dense::new(132, 132, Activation::Relu),
-    //     Dense::new(132, 132, Activation::Relu),
-    //     Dense::new(1, 132, Activation::Linear),
-    // ]);
-
-    // let mut model = Sequential::new(&[
-    //     Dense::new(32, 10, Activation::Relu),
     //     Dense::new(1, 32, Activation::Linear),
     // ]);
 
@@ -1004,10 +999,10 @@ fn main() {
 
     let start = Instant::now();
     
-     model.fit(100, &training_set, 0.,20, false, false, &config);
-    //model.fit_sgd(5000, &training_set, 0.2, 1e-5,200, false, false, &config);
-    //model.fit2(100, &training_set, 0.,100, false, false, &config);
-
+    //model.fit(100, &training_set, 0.,20, false, false, &config);
+    model.fit_batch(1000, &training_set, 0.1, 0.,200, false, false, &config);
+    //model.fit_decentralized(10, &training_set, 0.,100, false, false, &config);
+    
     let elapsed = start.elapsed();
 
     //let predict = model.predict(&new_data, false, &config);
