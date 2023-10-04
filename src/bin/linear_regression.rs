@@ -60,13 +60,19 @@ impl LinearRegression {
             "ADAM" | "adam"  =>
             {    
             let state = linear_adam(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, tol, n_iter_no_change, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
-            weights = state.best_weights;
+            if tol !=0.{
+            weights = state.best_weights;}
+            else{
+                weights = state.weights;}
             },
 
             "GD" | "gd" | "mini-batch"|"batch_gd" => 
             {
             let state = linear_batch_gd(weight_decay, learn_rate, data_fraction, num_iters, path_to_data, tol, n_iter_no_change, normalize, self.train_mean.clone(), self.train_std.clone(), config, "None", 0.);
-            weights = state.best_weights;
+            if tol !=0.{
+                weights = state.best_weights;}
+                else{
+                    weights = state.weights;}
             }
 
             "SGD" | "sgd" | _ => 
@@ -75,6 +81,7 @@ impl LinearRegression {
             weights = state.weights;
             }
         }    
+        
         self.coefficients = weights.clone();
         self.features_coef = weights.iter().take(weights.len()-1).cloned().collect::<Vec::<f64>>();
         self.intercept = weights[weights.len()-1];
@@ -222,7 +229,7 @@ fn main() {
     
     //hyper_parameters for the iterative method model.fit
     //let method = "SGD".to_string(); //"ADAM".to_string()//"GD".to_string()
-    let method = "ADAM".to_string();
+    let method = "GD".to_string();
     let num_iters = 100;
     let learn_rate = 1e-1;
     let data_fraction = 1.;
@@ -230,14 +237,14 @@ fn main() {
     let tol = 0.;
     let n_iter_no_change = 5;
 
-    let normalize = true;
+    let normalize = false;
 
     let start = Instant::now();
     //return the trained model
-    //model.fit(&training_set, method, num_iters, learn_rate, data_fraction, tol, n_iter_no_change, normalize, weight_decay, &config);
+    model.fit(&training_set, method, num_iters, learn_rate, data_fraction, tol, n_iter_no_change, normalize, weight_decay, &config);
 
     //fitting with ols
-    model.fit_ols(&training_set, false, &config);
+    //model.fit_ols(&training_set, false, &config);
 
     let elapsed = start.elapsed();
 
