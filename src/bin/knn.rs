@@ -106,6 +106,7 @@ impl KNNModel {
     ) -> StreamOutput<Vec<f64>> {
         //Initialize enviroment
         let mut env = StreamEnvironment::new(config.clone());
+        env.spawn_remote_workers();
         let source = CsvSource::<Point>::new(path)
             .has_headers(false)
             .delimiter(b',');
