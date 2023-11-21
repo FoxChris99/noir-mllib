@@ -94,10 +94,10 @@
 +------------------------+------------------------+----------------+
 |     Knn                |       knn   noir       |   python  knn  | 
 +------------------------+------------------------+----------------+
-| Dataset                | Noir 16 local 2728 par | Tensorflow cpu |
-| (n° rows, n° features) | Training Time 100 iter | Python         |
+| Dataset                | Noir 16 local 2728 par | Sklearn brute  |
+| (n° rows, n° features) | Training Time k = 5    | 16 jobs k= 5   |
 +------------------------+------------------------+----------------+
-| 1 million, 4           |        15m             |       5m       | 
+| 1 million, 4           |        10m             |       9m       | 
 +------------------------+------------------------+----------------+
 
 
